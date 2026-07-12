@@ -1,0 +1,17 @@
+{
+  "name": "PassionVerse — Turn Your Passion Into a Personalized Journey",
+  "short_name": "PassionVerse",
+  "description": "Tell us your dream, answer 5 questions, get a personalized roadmap with AI mentor.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#a855f7",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/passionverse-logo.png",
+      "sizes": "any",
+      "type": "image/png"
+    }
+  ]
+}
