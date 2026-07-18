@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Clock, DollarSign, Award, ChevronRight, Star, CheckCircle2 } from "lucide-react";
+import { Clock, DollarSign, Award, ChevronRight } from "lucide-react";
 import type { PresetRoadmap } from "@/lib/seed-data";
 import { getDifficultyColor } from "@/lib/utils";
 
@@ -19,7 +19,7 @@ export function RoadmapCard({ roadmap, onSelect }: RoadmapCardProps) {
   return (
     <div
       onClick={() => onSelect(roadmap)}
-      className="rounded-3xl glass-card p-6 sm:p-7 flex flex-col justify-between cursor-pointer group glow-border hover:shadow-xl transition-all"
+      className="group flex h-full cursor-pointer flex-col justify-between rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm transition-all hover:-translate-y-1 hover:border-purple-300 hover:shadow-md sm:p-7 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-purple-700"
     >
       <div>
         <div className="flex items-center justify-between gap-2 mb-4">

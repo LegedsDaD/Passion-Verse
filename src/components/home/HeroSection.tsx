@@ -45,7 +45,7 @@ function LiveTicker({
             exit={{ y: -14, opacity: 0 }}
             transition={{ duration: 0.35 }}
             onClick={() => onPick(active)}
-            className="absolute inset-0 flex w-full items-center justify-between gap-3 rounded-xl px-3 text-left font-display text-lg font-bold text-neutral-900 transition-colors hover:text-purple-600 dark:text-white dark:hover:text-purple-300"
+            className="flex w-full items-center justify-between gap-3 rounded-xl px-3 text-left font-display text-lg font-bold text-neutral-900 transition-colors hover:text-purple-600 dark:text-white dark:hover:text-purple-300"
           >
             <span className="truncate">{active}</span>
             <ArrowRight className="h-4 w-4 shrink-0 text-purple-500" />
@@ -170,10 +170,12 @@ export function HeroSection({ onStartInterview, onExploreRoadmaps }: HeroSection
         >
           <div className="flex flex-col gap-2 rounded-2xl border border-neutral-200 bg-white/90 p-2 shadow-xl shadow-neutral-200/50 backdrop-blur-sm dark:border-neutral-800 dark:bg-neutral-900/90 dark:shadow-black/30 sm:flex-row sm:p-2">
             <input
+              id="passion-input"
               type="text"
               value={dreamInput}
               onChange={(e) => setDreamInput(e.target.value)}
               placeholder='e.g. "I want to learn Japanese" or "I want to make an Otto robot"'
+              autoComplete="off"
               className="flex-1 rounded-xl bg-transparent px-4 py-3.5 text-base text-neutral-900 placeholder:text-neutral-400 focus:outline-none dark:text-white"
             />
             <button
