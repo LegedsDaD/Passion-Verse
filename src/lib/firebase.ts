@@ -30,6 +30,8 @@ if (typeof window !== "undefined" && isFirebaseConfigured) {
     dbFirestore = getFirestore(app);
     googleProvider = new GoogleAuthProvider();
   } catch (error) {
+    // Swallow during SSR so the page can still render the "Sign in" UI.
+    // The hook will surface a friendly message later.
     console.warn("Firebase initialization skipped or failed:", error);
   }
 }

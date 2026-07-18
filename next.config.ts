@@ -1,15 +1,25 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "lh3.googleusercontent.com",
+      },
+      {
+        protocol: "https",
+        hostname: "firebasestorage.googleapis.com",
+      },
+      {
+        protocol: "https",
+        hostname: "avatars.githubusercontent.com",
+      },
+    ],
+  },
   async headers() {
     return [
       {
-        // Firebase's signInWithPopup needs to read the popup window's closed
-        // state and communicate back to this origin. Some default security
-        // header sets (and Next.js's own defaults on newer versions) apply a
-        // strict Cross-Origin-Opener-Policy that makes the popup look like it
-        // "opens and immediately closes". This header explicitly allows that
-        // popup flow to work while keeping the rest of COOP protection.
         source: "/:path*",
         headers: [
           {

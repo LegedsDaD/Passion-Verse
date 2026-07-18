@@ -154,12 +154,18 @@ export function Navbar({
               aria-expanded={isAuthOpen}
             >
               {user?.photoURL ? (
-                <Image
+                // We deliberately use a plain <img> here instead of next/image because
+                // the URL can be a Googleusercontent link that occasionally returns a
+                // 403 during the first SSR render when the image optimizer has not yet
+                // cached it. A native <img> never throws and keeps the whole navbar
+                // resilient.
+                <img
                   src={user.photoURL}
                   alt={user.displayName || "Account"}
                   width={28}
                   height={28}
                   className="rounded-lg object-cover"
+                  referrerPolicy="no-referrer"
                 />
               ) : (
                 <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 text-white">
