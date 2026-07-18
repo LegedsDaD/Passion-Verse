@@ -24,4 +24,10 @@ export interface InterviewAnswer {
 export interface InterviewBundle {
   passion: string;
   answers: InterviewAnswer[];
+  markdownQuestions?: string;
+}
+
+export interface PlannedQuestionsResult {
+  questions: InterviewQuestion[];
+  markdownQuestions: string;
 }

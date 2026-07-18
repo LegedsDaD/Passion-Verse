@@ -5,15 +5,9 @@ import { PRESET_ROADMAPS } from "./seed-data";
 import type { InterviewBundle, InterviewQuestion } from "./gemini-types";
 import { serverKeys } from "@/config/keys.server";
 
-// Re-export types so existing server-side call sites keep working without
-// having to know about gemini-types directly.
+// Re-export types for backward compatibility
 export type { InterviewQuestion, InterviewAnswer, InterviewBundle } from "./gemini-types";
 
-/**
- * Resolves which Gemini API key to use for a given request: a user-supplied
- * "bring your own key" (from Settings) takes priority, otherwise we fall
- * back to the app's built-in server key.
- */
 function resolveApiKey(apiKeyOverride?: string): string | undefined {
   const trimmed = apiKeyOverride?.trim();
   if (trimmed) return trimmed;
@@ -41,12 +35,6 @@ function getModel(apiKeyOverride: string | undefined, config: ModelConfig) {
   }
 }
 
-/**
- * Gemini is asked for `application/json` responses, but some responses still
- * arrive wrapped in ```json fences or with leading/trailing prose. This
- * strips common wrappers before parsing so a cosmetic formatting quirk never
- * turns into a hard failure for the user.
- */
 function parseJsonLenient<T>(text: string): T {
   let cleaned = text.trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
@@ -65,9 +53,9 @@ function parseJsonLenient<T>(text: string): T {
   return JSON.parse(cleaned) as T;
 }
 
-function fallbackQuestions(passion: string): InterviewQuestion[] {
+function fallbackQuestions(passion: string): { questions: InterviewQuestion[]; markdownQuestions: string } {
   const subject = passion.trim() || "this passion";
-  return [
+  const questionsList = [
     {
       id: 1,
       label: "Goal",
@@ -99,70 +87,71 @@ function fallbackQuestions(passion: string): InterviewQuestion[] {
       whyNeeded: "Personalizes resources, exercises, and risk mitigation.",
     },
   ];
+
+  const markdownQuestions = `### Interview Questions for: ${subject}\n\n` +
+    questionsList.map((q) => `**${q.id}. [${q.label}]** ${q.question} *(Why needed: ${q.whyNeeded})*`).join("\n\n");
+
+  return { questions: questionsList, markdownQuestions };
 }
 
 export async function generateInterviewQuestionsAI(
   passion: string,
   apiKeyOverride?: string
-): Promise<InterviewQuestion[]> {
+): Promise<{ questions: InterviewQuestion[]; markdownQuestions: string }> {
   const normalizedPassion = passion.trim().slice(0, 300);
   if (!normalizedPassion) return fallbackQuestions("this passion");
 
   const model = getModel(apiKeyOverride, {
     responseMimeType: "application/json",
-    temperature: 0.25,
-    maxOutputTokens: 1400,
+    temperature: 0.35,
+    maxOutputTokens: 2000,
   });
 
   if (model) {
     try {
       const prompt = `
 You are the planning interviewer for PassionVerse.
-The user wants to pursue: "${normalizedPassion}".
+The user wants to pursue a passion or goal. 
+The exact user statement is: "I want to achieve - ${normalizedPassion}".
 
-Create EXACTLY five concise questions needed to build a safe, practical, personalized roadmap for this specific passion or goal.
-First infer whether this is a learning goal, habit, health/fitness goal, career goal, trip or experience, creative pursuit, business goal, or physical/digital project. Adapt vocabulary and resource questions to that type. Never assume the user is building a product.
+Analyze this target, and generate EXACTLY between 3 and 7 highly personalized, subject-specific questions needed to build a safe, practical roadmap.
+Do not output generic template questions. Design specific, relevant questions for this actual goal.
+For example, if they want to make an Otto robot, ask specifically about Arduino experience, servo motors, available 3D printer access, and motion scripting.
 
-Examples:
-- For "learn Japanese", ask about target proficiency/use case, current level, weekly practice time/deadline, learning resources or budget, and preferred practice style/obstacles.
-- For "train for a marathon", ask about target race, current fitness and health limitations, training availability/date, access to equipment/coaching and budget, then motivation/recovery obstacles.
-- For "make an Otto robot", ask about desired capabilities, electronics/coding experience, available time, budget and parts owned, then learning preference and safety constraints.
+Also write a beautiful, clear Markdown description of these questions to serve as an overview.
 
-Coverage across the five questions:
-1. Exact outcome and the user's personal definition of success.
-2. Current starting point, experience, and relevant background.
-3. Time available, consistency, and target date.
-4. Budget and resources already available (adapt this to the pursuit: tools, access, materials, equipment, courses, support, or location).
-5. Preferred way of learning/working plus accessibility, safety, motivation, and expected obstacles.
-
-Do not answer the questions. Do not combine them into one paragraph. Return strict JSON only:
+Return STRICT JSON only matching this exact schema:
 {
   "questions": [
-    { "id": 1, "label": "Goal", "question": "...", "whyNeeded": "..." },
-    { "id": 2, "label": "Starting point", "question": "...", "whyNeeded": "..." },
-    { "id": 3, "label": "Time and deadline", "question": "...", "whyNeeded": "..." },
-    { "id": 4, "label": "Resources and budget", "question": "...", "whyNeeded": "..." },
-    { "id": 5, "label": "Learning and constraints", "question": "...", "whyNeeded": "..." }
-  ]
+    { "id": 1, "label": "Short label (e.g. Goal, Coding, Equipment)", "question": "The actual full question to ask", "whyNeeded": "Why we need this answer" }
+  ],
+  "markdownQuestions": "A beautiful Markdown string containing all generated questions in a clean listed format"
 }`;
 
       const result = await model.generateContent(prompt);
-      const parsed = parseJsonLenient<{ questions?: InterviewQuestion[] }>(
+      const parsed = parseJsonLenient<{ questions?: InterviewQuestion[]; markdownQuestions?: string }>(
         result.response.text()
       );
+      
       if (
         Array.isArray(parsed.questions) &&
-        parsed.questions.length === 5 &&
-        parsed.questions.every((question) => Boolean(question?.question?.trim()))
+        parsed.questions.length >= 3 &&
+        parsed.questions.length <= 7 &&
+        parsed.questions.every((q) => Boolean(q?.question?.trim()))
       ) {
-        return parsed.questions.map((question, index) => ({
+        const cleanedQs = parsed.questions.map((q, index) => ({
           id: index + 1,
-          label: question.label || `Question ${index + 1}`,
-          question: question.question.trim(),
-          whyNeeded: question.whyNeeded || "Used to personalize your roadmap.",
+          label: q.label || `Question ${index + 1}`,
+          question: q.question.trim(),
+          whyNeeded: q.whyNeeded || "Used to personalize your roadmap.",
         }));
+
+        const mdQuestions = parsed.markdownQuestions || 
+          `### Personalized Interview Questions\n\n` + cleanedQs.map((q) => `**${q.id}. [${q.label}]** ${q.question}\n*Why we ask:* ${q.whyNeeded}`).join("\n\n");
+
+        return { questions: cleanedQs, markdownQuestions: mdQuestions };
       }
-      console.warn("Gemini returned an unexpected question shape; using fallback questions.");
+      console.warn("Gemini returned invalid questions range; using fallback questions.");
     } catch (error) {
       console.warn("Gemini question planning failed; using fallback questions:", error);
     }
@@ -177,7 +166,7 @@ export async function generatePersonalizedRoadmapAI(
 ): Promise<PresetRoadmap> {
   const model = getModel(apiKeyOverride, {
     responseMimeType: "application/json",
-    temperature: 0.35,
+    temperature: 0.4,
     maxOutputTokens: 8192,
   });
 
@@ -185,123 +174,73 @@ export async function generatePersonalizedRoadmapAI(
     try {
       const prompt = `
 You are the roadmap architect for PassionVerse.
-The user selected this passion: "${collectedData.passion}".
-Gemini previously created five planning questions. The user answered them one by one. Here is the complete ordered interview bundle:
+The user wants to pursue this passion: "I want to achieve - ${collectedData.passion}".
+Here are their answers to the personalized planning interview:
 ${JSON.stringify(collectedData.answers, null, 2)}
 
-Build one coherent, practical roadmap specifically for this passion and these answers.
-Rules:
-- Treat the five answers as authoritative constraints. Do not invent experience, budget, owned equipment, weekly availability, or deadlines.
-- Put prerequisites and safety-critical foundations before assembly or advanced work.
-- Respect the stated budget. Separate essential purchases from recommended and optional purchases.
-- Match task duration to the user's weekly availability and target date.
-- Skip fundamentals the user already knows and explain why each remaining step matters.
-- Use subject-specific terminology. If this is a physical build such as an Otto robot, include components, wiring, assembly, programming, calibration, testing, troubleshooting, and safe power practices as appropriate.
-- Recommend credible official documentation and useful learning resources. Never fabricate a URL; use a stable publisher/home/documentation URL when an exact deep link is uncertain.
-- Return strict JSON only, without markdown fences.
+Build one coherent, highly personalized, practical roadmap specifically for this passion and these answers.
+You must output BOTH a structured JSON format (for interactive toggling) AND beautiful, detailed Markdown blocks.
 
-Return STRICT JSON matching this exact structure:
+Specific deliverables:
+1. "markdownRoadmap": A complete, gorgeous, comprehensive guide to mastering this passion in Markdown format, incorporating resources, steps, milestone metrics, and common mistakes.
+2. "markdownTimetable": A detailed schedule/timetable in Markdown format, structured as a clean timetable list or table. This will also be used to trigger future notifications, so list clear timing checkpoints.
+3. High quality structured fields (title, goal, category, estimatedDuration, estimatedBudget, difficulty, weeklyPlan, milestones, dailyTasks, shoppingList, steps) matching the JSON scheme perfectly.
+
+Return STRICT JSON only, matching this exact schema:
 {
-  "title": "Clear, inspiring title (e.g. 'Mastering Full-Stack Autonomous AI Systems')",
+  "title": "Clear, inspiring title",
   "goal": "Specific concrete goal summarizing their desired outcome",
-  "category": "One of: Code & AI, Film & Photo, Music & Audio, Craft & Culinary, Gaming & Design, Business & Startup, Fitness & Health",
+  "category": "One of: Code & AI, Film & Photo, Music & Audio, Craft & Culinary, Gaming & Design, Business & Startup, Fitness & Health, General",
   "estimatedDuration": "e.g. '10 Weeks' or '6 Months'",
   "estimatedBudget": "e.g. '$150 total' or '$0 (Free tier tools)'",
   "difficulty": "One of: Beginner, Intermediate, Advanced, Expert",
+  "markdownRoadmap": "Detailed roadmap in Markdown format",
+  "markdownTimetable": "Detailed timetable/schedule in Markdown format",
   "weeklyPlan": [
-    { "weekNumber": 1, "title": "...", "focus": "...", "tasks": ["task 1", "task 2", "task 3"] },
-    { "weekNumber": 2, "title": "...", "focus": "...", "tasks": ["task 1", "task 2"] },
-    { "weekNumber": 3, "title": "...", "focus": "...", "tasks": ["task 1", "task 2"] },
-    { "weekNumber": 4, "title": "...", "focus": "...", "tasks": ["task 1", "task 2"] }
+    { "weekNumber": 1, "title": "...", "focus": "...", "tasks": ["task 1", "task 2"] }
   ],
   "milestones": [
-    { "id": "m-1", "title": "First Functional Prototype", "description": "...", "targetWeek": 2, "completed": false },
-    { "id": "m-2", "title": "Mid-Journey Checkpoint", "description": "...", "targetWeek": 4, "completed": false }
+    { "id": "m-1", "title": "First Milestone", "description": "...", "targetWeek": 2, "completed": false }
   ],
   "dailyTasks": [
-    { "id": "dt-1", "dayNumber": 1, "title": "...", "durationMinutes": 30, "completed": false },
-    { "id": "dt-2", "dayNumber": 2, "title": "...", "durationMinutes": 45, "completed": false },
-    { "id": "dt-3", "dayNumber": 3, "title": "...", "durationMinutes": 60, "completed": false }
+    { "id": "dt-1", "dayNumber": 1, "title": "...", "durationMinutes": 30, "completed": false }
   ],
   "shoppingList": [
-    { "id": "sl-1", "item": "...", "estimatedCost": "$20", "priority": "Essential", "purchased": false },
-    { "id": "sl-2", "item": "...", "estimatedCost": "$0", "priority": "Recommended", "purchased": false }
+    { "id": "sl-1", "item": "...", "estimatedCost": "$20", "priority": "Essential", "purchased": false }
   ],
   "learningPath": [
-    { "stage": "Stage 1: Core Foundation", "description": "...", "resourcesCount": 5 },
-    { "stage": "Stage 2: Practical Application", "description": "...", "resourcesCount": 7 }
+    { "stage": "Stage 1", "description": "...", "resourcesCount": 5 }
   ],
   "recommendedProjects": [
-    { "id": "rp-1", "title": "...", "description": "...", "difficulty": "Intermediate", "expectedOutcome": "..." },
-    { "id": "rp-2", "title": "...", "description": "...", "difficulty": "Advanced", "expectedOutcome": "..." }
+    { "id": "rp-1", "title": "...", "description": "...", "difficulty": "Intermediate", "expectedOutcome": "..." }
   ],
   "commonMistakes": [
-    "Common mistake 1 and how to avoid it",
-    "Common mistake 2 and how to avoid it",
-    "Common mistake 3 and how to avoid it"
+    "Mistake and how to avoid it"
   ],
   "successTips": [
-    "Success tip 1 for daily consistency",
-    "Success tip 2 for effective practice"
+    "Tip for daily consistency"
   ],
   "steps": [
     {
       "id": "step-1",
       "stepIndex": 1,
-      "title": "Foundation Setup & First Sprint",
-      "description": "...",
-      "whyItMatters": "...",
+      "title": "Foundation Setup",
+      "description": "Step description",
+      "whyItMatters": "Why this matters",
       "estimatedTime": "4 hours",
       "difficulty": "Beginner",
-      "prerequisites": ["Prereq 1", "Prereq 2"],
-      "estimatedCost": "$0",
-      "helpfulTips": ["Tip 1", "Tip 2"],
-      "commonMistakes": ["Mistake 1"],
-      "onlineResources": [{ "title": "Official Doc", "url": "https://example.com", "type": "Docs" }],
-      "recommendedYouTubeVideos": [{ "title": "Deep Dive Tutorial", "url": "https://youtube.com", "channel": "Expert Channel", "duration": "18:20" }],
-      "officialDocumentation": [{ "title": "Reference Manual", "url": "https://example.com" }],
-      "practiceExercises": [{ "title": "First Hands-On Drill", "task": "...", "hint": "..." }],
-      "completed": false
-    },
-    {
-      "id": "step-2",
-      "stepIndex": 2,
-      "title": "Intermediate Core Skills & Project Architecture",
-      "description": "...",
-      "whyItMatters": "...",
-      "estimatedTime": "6 hours",
-      "difficulty": "Intermediate",
-      "prerequisites": ["Step 1 completed"],
-      "estimatedCost": "$15",
-      "helpfulTips": ["Tip 1"],
-      "commonMistakes": ["Mistake 1"],
-      "onlineResources": [{ "title": "Advanced Guide", "url": "https://example.com", "type": "Guide" }],
-      "recommendedYouTubeVideos": [{ "title": "Step 2 Masterclass", "url": "https://youtube.com", "channel": "Top Creator", "duration": "22:15" }],
-      "officialDocumentation": [{ "title": "API Specification", "url": "https://example.com" }],
-      "practiceExercises": [{ "title": "Real-World Challenge", "task": "...", "hint": "..." }],
-      "completed": false
-    },
-    {
-      "id": "step-3",
-      "stepIndex": 3,
-      "title": "Advanced Mastery & Portfolio Launch",
-      "description": "...",
-      "whyItMatters": "...",
-      "estimatedTime": "8 hours",
-      "difficulty": "Advanced",
-      "prerequisites": ["Step 2 completed"],
+      "prerequisites": ["Prereq 1"],
       "estimatedCost": "$0",
       "helpfulTips": ["Tip 1"],
       "commonMistakes": ["Mistake 1"],
-      "onlineResources": [{ "title": "Launch Checklist", "url": "https://example.com", "type": "Checklist" }],
-      "recommendedYouTubeVideos": [{ "title": "Final Showcase Strategies", "url": "https://youtube.com", "channel": "Pro Mentor", "duration": "14:50" }],
-      "officialDocumentation": [{ "title": "Deployment Best Practices", "url": "https://example.com" }],
-      "practiceExercises": [{ "title": "Capstone Exercise", "task": "...", "hint": "..." }],
+      "onlineResources": [{ "title": "Resource", "url": "https://example.com", "type": "Docs" }],
+      "recommendedYouTubeVideos": [{ "title": "Video", "url": "https://youtube.com", "channel": "Channel", "duration": "10:00" }],
+      "officialDocumentation": [{ "title": "Docs", "url": "https://example.com" }],
+      "practiceExercises": [{ "title": "Exercise", "task": "Task detail", "hint": "Hint info" }],
       "completed": false
     }
   ]
-}
-`;
+}`;
 
       const result = await model.generateContent(prompt);
       const parsed = parseJsonLenient<Partial<PresetRoadmap>>(result.response.text());
@@ -324,6 +263,30 @@ Return STRICT JSON matching this exact structure:
     basePreset = PRESET_ROADMAPS[3];
   }
 
+  const generatedMarkdownRoadmap = `
+# Roadmap: Mastering ${collectedData.passion}
+
+## Goal
+${answer(1) || `Build practical mastery in ${collectedData.passion}.`}
+
+## Schedule & Progress Overview
+- **Duration:** ${answer(3) || basePreset.estimatedDuration}
+- **Allocated Budget:** ${answer(4) || basePreset.estimatedBudget}
+
+## Phases of Progress
+1. **Phase 1: Getting Started & Foundations**
+2. **Phase 2: Project Architecture & Execution**
+3. **Phase 3: Refinement, Polish & Publishing**
+`;
+
+  const generatedMarkdownTimetable = `
+| Stage | Target Milestone | Commitment | Recommended Focus |
+|---|---|---|---|
+| Week 1-2 | Basic setup & initial testing | 4-6 hours | Focus on core configuration |
+| Week 3-4 | Mid-point project iteration | 6-8 hours | Assemble structural layouts |
+| Week 5-6 | Polish, debugging, and wrap-up | 5 hours | Complete capstone project |
+`;
+
   return {
     ...basePreset,
     id: `custom-${Date.now()}`,
@@ -338,6 +301,8 @@ Return STRICT JSON matching this exact structure:
     milestones: basePreset.milestones.map((m) => ({ ...m, completed: false })),
     dailyTasks: basePreset.dailyTasks.map((t) => ({ ...t, completed: false })),
     shoppingList: basePreset.shoppingList.map((s) => ({ ...s, purchased: false })),
+    markdownRoadmap: generatedMarkdownRoadmap,
+    markdownTimetable: generatedMarkdownTimetable,
   };
 }
 
@@ -394,6 +359,24 @@ function normalizeRoadmap(
       }))
     : base.steps.map((s) => ({ ...s, completed: false }));
 
+  const defaultMarkdownRoadmap = `
+# Roadmap: Mastering ${collectedData.passion}
+
+## Goal
+${parsed.goal || answer(1) || `Follow your passion for ${collectedData.passion}.`}
+
+## Progress Path & Milestone Sprints
+${milestones.map((m) => `- **Week ${m.targetWeek}:** ${m.title} — *${m.description}*`).join("\n")}
+`;
+
+  const defaultMarkdownTimetable = `
+### Program Timetable Schedule
+
+| Milestone Period | Target Goal | Recommended Duration |
+|---|---|---|
+${weeklyPlan.map((wp) => `| Week ${wp.weekNumber} | ${wp.title} | ${wp.focus} |`).join("\n")}
+`;
+
   return {
     id: `custom-${Date.now()}`,
     title: parsed.title || `Personalized Journey: ${collectedData.passion}`,
@@ -415,6 +398,8 @@ function normalizeRoadmap(
     successTips,
     steps,
     createdAt: new Date().toISOString(),
+    markdownRoadmap: parsed.markdownRoadmap || defaultMarkdownRoadmap,
+    markdownTimetable: parsed.markdownTimetable || defaultMarkdownTimetable,
   };
 }
 
@@ -461,7 +446,7 @@ Return STRICT JSON:
       if (parsed?.reply) {
         return { reply: parsed.reply, adaptedStep: parsed.adaptedStep };
       }
-      console.warn("Gemini mentor reply had no `reply` field; using fallback mentor logic.");
+      console.warn("Gemini mentor reply had no \`reply\` field; using fallback mentor logic.");
     } catch (error) {
       console.warn("Gemini mentor call failed; using fallback mentor logic:", error);
     }
@@ -485,6 +470,6 @@ Return STRICT JSON:
   }
 
   return {
-    reply: `Here's how I'd approach that for **${roadmap.title}**:\n\n1. Anchor to one concrete outcome for today — something you can finish in one sitting.\n2. Use the official documentation link on the active step for the canonical answer, not a random blog post.\n3. When in doubt, do the smallest possible version first, then iterate.\n\nShare a bit more about where you're stuck (a step number, an error, or a decision you're weighing) and I'll get specific.`,
+    reply: `Here's how I'd approach that for **${roadmap.title}**:\n\n1. Anchor to one concrete outcome for today — something you can finish in one sitting.\n2. Use the official documentation link on the active step for the canonical answer, not a random borough post.\n3. When in doubt, do the smallest possible version first, then iterate.\n\nShare a bit more about where you're stuck (a step number, an error, or a decision you're weighing) and I'll get specific.`,
   };
 }

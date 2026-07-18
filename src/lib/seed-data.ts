@@ -29,6 +29,9 @@ export interface PresetRoadmap {
   successTips: string[];
   steps: RoadmapStepItem[];
   createdAt: string;
+  markdownRoadmap?: string;
+  markdownTimetable?: string;
+  markdownQuestions?: string;
 }
 
 const _PRESET_ROADMAPS_RAW: PresetRoadmap[] = [

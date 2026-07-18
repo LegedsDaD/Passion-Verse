@@ -43,10 +43,11 @@ export async function generateRoadmapFromInterviewAction(
   bundle: InterviewBundle,
   apiKeyOverride?: string
 ): Promise<PresetRoadmap> {
+  const answerCount = bundle.answers?.length ?? 0;
   const normalizedBundle: InterviewBundle = {
     passion: bundle.passion.trim().slice(0, 300),
     answers: (bundle.answers ?? [])
-      .slice(0, 5)
+      .slice(0, answerCount)
       .map((item, index) => ({
         questionId: index + 1,
         question: (item?.question ?? "").trim().slice(0, 500),
@@ -54,8 +55,8 @@ export async function generateRoadmapFromInterviewAction(
       })),
   };
 
-  if (!normalizedBundle.passion || normalizedBundle.answers.length !== 5) {
-    throw new Error("A passion and all five interview answers are required.");
+  if (!normalizedBundle.passion || answerCount < 3 || answerCount > 7) {
+    throw new Error(`A passion and exactly 3 to 7 interview answers are required (received ${answerCount}).`);
   }
   if (normalizedBundle.answers.some((item) => !item.question || !item.answer)) {
     throw new Error("Please answer every interview question before generating your roadmap.");
@@ -72,6 +73,27 @@ export async function generateRoadmapFromInterviewAction(
     const timeAnswer = normalizedBundle.answers.find((a) => a.questionId === 3)?.answer ?? "";
     const budgetAnswer = normalizedBundle.answers.find((a) => a.questionId === 4)?.answer ?? "";
 
+    const fallbackMd = `
+# Fallback Roadmap: ${normalizedBundle.passion}
+
+We experienced a generation hiccup, but your structured guide is safely compiled below.
+
+## Personal Goal
+${goalAnswer || `Explore and master ${normalizedBundle.passion}.`}
+
+## Commitment
+- **Estimated Duration:** ${timeAnswer || "8 Weeks"}
+- **Budget Range:** ${budgetAnswer || "Free tools"}
+`;
+
+    const fallbackTimetable = `
+| Phase | Action Checkpoint | Commitment |
+|---|---|---|
+| Phase 1 | Foundation & Basics | ${timeAnswer || "Flexible schedule"} |
+| Phase 2 | Core Milestones | Progress-driven |
+| Phase 3 | Final Polish & Review | Continuous habit |
+`;
+
     return {
       ...base,
       id: `fallback-${Date.now()}`,
@@ -86,6 +108,8 @@ export async function generateRoadmapFromInterviewAction(
       milestones: base.milestones.map((m) => ({ ...m, completed: false })),
       dailyTasks: base.dailyTasks.map((t) => ({ ...t, completed: false })),
       shoppingList: base.shoppingList.map((s) => ({ ...s, purchased: false })),
+      markdownRoadmap: fallbackMd,
+      markdownTimetable: fallbackTimetable,
     };
   }
 }

@@ -14,6 +14,8 @@ import {
   Loader2,
   BookOpen,
   Target,
+  CalendarDays,
+  FileText,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
@@ -37,7 +39,7 @@ export function RoadmapDetailView({
   onUpdateRoadmap,
   userGeminiApiKey,
 }: RoadmapDetailViewProps) {
-  const [activeTab, setActiveTab] = React.useState<"steps" | "progress">("steps");
+  const [activeTab, setActiveTab] = React.useState<"steps" | "progress" | "markdown" | "timetable">("steps");
   const [selectedStepIdx, setSelectedStepIdx] = React.useState<number | null>(null);
   const [mentorOpen, setMentorOpen] = React.useState(false);
   const [stepMentorQuestion, setStepMentorQuestion] = React.useState("");
@@ -139,22 +141,34 @@ export function RoadmapDetailView({
         </div>
 
         {/* Tabs */}
-        <div className="mb-6 flex gap-2 border-b border-neutral-200 dark:border-neutral-800">
+        <div className="mb-6 flex flex-wrap gap-2 border-b border-neutral-200 dark:border-neutral-800">
           <button
             onClick={() => setActiveTab("steps")}
-            className={`pb-3 text-sm font-bold ${activeTab === "steps" ? "border-b-2 border-purple-500 text-purple-600" : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300"}`}
+            className={`pb-3 text-sm font-bold px-1 transition-all ${activeTab === "steps" ? "border-b-2 border-purple-500 text-purple-600" : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300"}`}
           >
             Steps ({totalSteps})
           </button>
           <button
             onClick={() => setActiveTab("progress")}
-            className={`pb-3 text-sm font-bold ${activeTab === "progress" ? "border-b-2 border-purple-500 text-purple-600" : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300"}`}
+            className={`pb-3 text-sm font-bold px-1 transition-all ${activeTab === "progress" ? "border-b-2 border-purple-500 text-purple-600" : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300"}`}
           >
             Milestones ({roadmap.milestones.length})
           </button>
+          <button
+            onClick={() => setActiveTab("markdown")}
+            className={`pb-3 text-sm font-bold px-1 transition-all flex items-center gap-1 ${activeTab === "markdown" ? "border-b-2 border-purple-500 text-purple-600" : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300"}`}
+          >
+            <FileText className="h-4 w-4" /> Roadmap MD
+          </button>
+          <button
+            onClick={() => setActiveTab("timetable")}
+            className={`pb-3 text-sm font-bold px-1 transition-all flex items-center gap-1 ${activeTab === "timetable" ? "border-b-2 border-purple-500 text-purple-600" : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300"}`}
+          >
+            <CalendarDays className="h-4 w-4" /> Timetable MD
+          </button>
         </div>
 
-        {/* STEPS TAB */}
+        {/* TAB CONTENTS */}
         <AnimatePresence mode="wait">
           {activeTab === "steps" && (
             <motion.div
@@ -346,13 +360,13 @@ export function RoadmapDetailView({
                         {/* Right side actions */}
                         <div className="flex shrink-0 items-center gap-1.5">
                           {!isSelected && (
-                            <>
+                            <div className="flex items-center gap-2">
                               <span className="hidden text-xs text-neutral-400 sm:inline-flex gap-1 items-center">
                                 <Clock className="h-3.5 w-3.5"/>{step.estimatedTime}
                               </span>
                               <MessageSquare className="h-4 w-4 text-purple-400 group-hover:text-purple-600"/>
                               <ChevronRight className="h-4 w-4 text-neutral-300 group-hover:text-purple-500"/>
-                            </>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -393,6 +407,50 @@ export function RoadmapDetailView({
                   <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{ms.description}</p>
                 </div>
               ))}
+            </motion.div>
+          )}
+
+          {activeTab === "markdown" && (
+            <motion.div
+              key="markdown-tab"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="rounded-2xl border border-neutral-200 bg-white p-6 dark:border-neutral-800 dark:bg-neutral-900"
+            >
+              <div className="mb-4 flex items-center justify-between border-b border-neutral-100 pb-3 dark:border-neutral-800">
+                <h3 className="font-display text-lg font-black text-neutral-900 dark:text-white">
+                  Markdown Master Roadmap Guide
+                </h3>
+                <span className="rounded-full bg-purple-50 px-2.5 py-1 text-xs font-bold text-purple-700 dark:bg-purple-950/30 dark:text-purple-400">
+                  Rich Document Format
+                </span>
+              </div>
+              <div className="prose dark:prose-invert max-w-none overflow-y-auto max-h-[60vh] whitespace-pre-wrap rounded-xl bg-neutral-50 p-5 font-mono text-sm leading-relaxed text-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-800">
+                {roadmap.markdownRoadmap || "# No Markdown Available\nGenerate a new roadmap to view its markdown documentation."}
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === "timetable" && (
+            <motion.div
+              key="timetable-tab"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="rounded-2xl border border-neutral-200 bg-white p-6 dark:border-neutral-800 dark:bg-neutral-900"
+            >
+              <div className="mb-4 flex items-center justify-between border-b border-neutral-100 pb-3 dark:border-neutral-800">
+                <h3 className="font-display text-lg font-black text-neutral-900 dark:text-white">
+                  Chronological Timetable Schedule
+                </h3>
+                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 dark:bg-blue-950/30 dark:text-blue-400">
+                  Notification Triggers
+                </span>
+              </div>
+              <div className="prose dark:prose-invert max-w-none overflow-y-auto max-h-[60vh] whitespace-pre-wrap rounded-xl bg-neutral-50 p-5 font-mono text-sm leading-relaxed text-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-800">
+                {roadmap.markdownTimetable || "No Timetable Available.\nGenerate a new roadmap to view its timetable documentation."}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
