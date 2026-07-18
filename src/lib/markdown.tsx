@@ -13,8 +13,6 @@
  * [text](url) links. Nested lists are not supported — Gemini's prompts are
  * shaped to emit flat lists only.
  */
-"use client";
-
 import React from "react";
 
 type InlineToken =
