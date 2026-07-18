@@ -2,12 +2,70 @@
 
 import React from "react";
 import { ArrowRight, Sparkles } from "lucide-react";
-import { motion, useScroll, useTransform } from "framer-motion";
+import { motion, AnimatePresence, useScroll, useTransform } from "framer-motion";
 import Image from "next/image";
 
 interface HeroSectionProps {
   onStartInterview: (initialPassion?: string) => void;
   onExploreRoadmaps: () => void;
+}
+
+/**
+ * A small live ticker that cycles through example passions. Clicking a row
+ * launches the interview pre-filled. The animation gives the hero a sense
+ * of motion without relying on an aurora blob.
+ */
+function LiveTicker({
+  dreams,
+  onPick,
+}: {
+  dreams: string[];
+  onPick: (value: string) => void;
+}) {
+  const [index, setIndex] = React.useState(0);
+  React.useEffect(() => {
+    const id = window.setInterval(() => setIndex((i) => (i + 1) % dreams.length), 3200);
+    return () => window.clearInterval(id);
+  }, [dreams.length]);
+  const active = dreams[index];
+  return (
+    <div className="rounded-2xl border border-neutral-200 bg-white/80 p-4 shadow-sm backdrop-blur-sm dark:border-neutral-800 dark:bg-neutral-900/80">
+      <div className="mb-2 flex items-center justify-between text-[11px] font-bold uppercase tracking-[0.2em] text-neutral-500 dark:text-neutral-400">
+        <span>Right now, people are asking</span>
+        <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> live
+        </span>
+      </div>
+      <div className="relative h-9 overflow-hidden">
+        <AnimatePresence mode="wait">
+          <motion.button
+            key={active}
+            initial={{ y: 14, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -14, opacity: 0 }}
+            transition={{ duration: 0.35 }}
+            onClick={() => onPick(active)}
+            className="absolute inset-0 flex w-full items-center justify-between gap-3 rounded-xl px-3 text-left font-display text-lg font-bold text-neutral-900 transition-colors hover:text-purple-600 dark:text-white dark:hover:text-purple-300"
+          >
+            <span className="truncate">{active}</span>
+            <ArrowRight className="h-4 w-4 shrink-0 text-purple-500" />
+          </motion.button>
+        </AnimatePresence>
+      </div>
+      <div className="mt-3 flex gap-1.5">
+        {dreams.map((_, i) => (
+          <button
+            key={i}
+            onClick={() => setIndex(i)}
+            className={`h-1 flex-1 rounded-full transition-colors ${
+              i === index ? "bg-purple-500" : "bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700"
+            }`}
+            aria-label={`Show example ${i + 1}`}
+          />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 const POPULAR_DREAMS = [
@@ -56,26 +114,24 @@ export function HeroSection({ onStartInterview, onExploreRoadmaps }: HeroSection
       <div className="pointer-events-none absolute right-[12%] top-[30%] h-1.5 w-1.5 rounded-full bg-pink-400/60 shadow-[0_0_20px_rgba(236,72,153,0.6)] animate-pulse" style={{ animationDelay: "0.7s" }} />
       <div className="pointer-events-none absolute left-[20%] top-[68%] h-1 w-1 rounded-full bg-indigo-400/60 animate-pulse" style={{ animationDelay: "1.4s" }} />
 
-      {/* Parallax content */}
+      {/* Parallax content — asymmetric, editorial, left-aligned */}
       <motion.div
         style={{ y: contentY, opacity: contentOpacity, scale: contentScale }}
-        className="relative mx-auto flex min-h-[92vh] max-w-5xl flex-col items-center justify-center px-4 py-20 text-center sm:px-6 lg:px-8"
+        className="relative mx-auto flex min-h-[92vh] max-w-6xl flex-col justify-center px-4 py-20 sm:px-6 lg:px-10"
       >
-        {/* Floating logo badge */}
-        <motion.div style={{ y: badgeY, rotate: badgeRotate }} className="mb-8">
-          <div className="inline-flex items-center gap-3 rounded-full border border-purple-200 bg-white/80 px-4 py-2 shadow-lg shadow-purple-200/30 backdrop-blur-md dark:border-purple-800/60 dark:bg-neutral-900/80 dark:shadow-purple-900/20">
-            <div className="relative h-8 w-8 overflow-hidden rounded-full">
-              <Image src="/passionverse-logo.png" alt="" fill className="object-cover" priority />
-            </div>
-            <span className="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
-              Follow any passion with a clear plan
-            </span>
-            <Sparkles className="h-3.5 w-3.5 text-purple-500" />
+        {/* Kicker */}
+        <motion.div style={{ y: badgeY, rotate: badgeRotate }} className="mb-6 inline-flex w-fit items-center gap-3 rounded-full border border-purple-200 bg-white/80 px-4 py-2 shadow-lg shadow-purple-200/30 backdrop-blur-md dark:border-purple-800/60 dark:bg-neutral-900/80 dark:shadow-purple-900/20">
+          <div className="relative h-8 w-8 overflow-hidden rounded-full">
+            <Image src="/passionverse-logo.png" alt="" fill className="object-cover" priority />
           </div>
+          <span className="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+            Follow any passion with a clear plan
+          </span>
+          <Sparkles className="h-3.5 w-3.5 text-purple-500" />
         </motion.div>
 
-        {/* Display headline — Bricolage Grotesque, strong hierarchy, NOT a gradient paint */}
-        <h1 className="font-display text-5xl font-extrabold leading-[0.95] tracking-tight text-neutral-900 sm:text-7xl lg:text-8xl dark:text-white">
+        {/* Display headline — asymmetric, oversized, left-aligned */}
+        <h1 className="font-display max-w-4xl text-5xl font-black leading-[0.9] tracking-[-0.03em] text-neutral-900 sm:text-7xl lg:text-[7.5rem] dark:text-white">
           Follow what
           <br />
           you{" "}
@@ -92,11 +148,20 @@ export function HeroSection({ onStartInterview, onExploreRoadmaps }: HeroSection
           </span>
         </h1>
 
-        <p className="mt-8 max-w-2xl text-base text-neutral-600 sm:text-lg dark:text-neutral-400">
-          Tell us the goal or passion you want to follow. Gemini asks{" "}
-          <span className="font-bold text-neutral-900 dark:text-white">5 focused questions</span>,
-          then creates a roadmap with practical steps, budget, timeline, and an AI mentor.
-        </p>
+        {/* Right-aligned supporting column — breaks the centered trio pattern */}
+        <div className="mt-10 grid gap-8 lg:grid-cols-[1.2fr_1fr] lg:items-end">
+          <p className="max-w-xl text-lg leading-relaxed text-neutral-700 sm:text-xl dark:text-neutral-300">
+            Tell us, in your own words, what you want to achieve. Gemini reads
+            it once and writes{" "}
+            <span className="font-bold text-neutral-900 dark:text-white">between three and seven questions</span>{" "}
+            — exactly the number it needs for your situation. Nothing is hard-coded.
+            Answer them, and you get a complete Markdown roadmap plus a timetable
+            you can subscribe to.
+          </p>
+
+          {/* Live rotating examples ticker */}
+          <LiveTicker dreams={POPULAR_DREAMS} onPick={onStartInterview} />
+        </div>
 
         {/* Input */}
         <form
@@ -121,18 +186,8 @@ export function HeroSection({ onStartInterview, onExploreRoadmaps }: HeroSection
           </div>
         </form>
 
-        {/* Quick dream chips */}
-        <div className="mt-8 flex flex-wrap justify-center gap-2">
-          {POPULAR_DREAMS.map((dream) => (
-            <button
-              key={dream}
-              onClick={() => onStartInterview(dream)}
-              className="rounded-full border border-neutral-200 bg-white/60 px-3.5 py-1.5 text-xs font-medium text-neutral-700 transition-all hover:-translate-y-0.5 hover:border-purple-400 hover:text-purple-700 dark:border-neutral-800 dark:bg-neutral-900/60 dark:text-neutral-300 dark:hover:text-purple-300"
-            >
-              {dream}
-            </button>
-          ))}
-        </div>
+        {/* The rotating ticker replaces the centered chip row. See
+            <LiveTicker /> definition below the HeroSection export. */}
 
         {/* Scroll cue */}
         <div className="mt-16 text-[11px] font-bold uppercase tracking-[0.3em] text-neutral-400">

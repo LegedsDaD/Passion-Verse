@@ -11,8 +11,14 @@ service cloud.firestore {
     }
 
     // Per-user "bring your own API key" settings (Gemini / ElevenLabs).
-    // Only the owner can ever read or write their own document.
     match /userSettings/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // FCM tokens for scheduled push notifications. Owned by the user; a
+    // privileged Cloud Function (using the Admin SDK) reads this collection
+    // to target a specific user when a timetable session is due.
+    match /userTokens/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 

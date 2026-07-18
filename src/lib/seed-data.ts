@@ -8,6 +8,17 @@ import type {
   RoadmapStepItem,
 } from "@/db/schema";
 
+export interface PresetRoadmapTimetableEntry {
+  day: string;
+  time: string;
+  notifyAt: string | null;
+  title: string;
+  description: string;
+  durationMinutes: number;
+  /** Whether the user has enabled a notification for this row. */
+  notified?: boolean;
+}
+
 export interface PresetRoadmap {
   id: string;
   title: string;
@@ -29,9 +40,12 @@ export interface PresetRoadmap {
   successTips: string[];
   steps: RoadmapStepItem[];
   createdAt: string;
-  markdownRoadmap?: string;
-  markdownTimetable?: string;
-  markdownQuestions?: string;
+
+  // Markdown-native fields (optional — older records simply omit them).
+  questionMarkdown?: string;
+  roadmapMarkdown?: string;
+  timetableMarkdown?: string;
+  timetable?: PresetRoadmapTimetableEntry[];
 }
 
 const _PRESET_ROADMAPS_RAW: PresetRoadmap[] = [
@@ -468,8 +482,136 @@ const _PRESET_ROADMAPS_RAW: PresetRoadmap[] = [
  * Reset all example roadmaps to 0% progress on first load so users get a
  * fresh, uncompleted template regardless of how the seed data was authored.
  */
-function resetRoadmapProgress(r: PresetRoadmap): PresetRoadmap {
+function synthesizeMarkdown(r: PresetRoadmap): PresetRoadmap {
+  const stepsMd = r.steps
+    .map((s, i) => {
+      const tips = s.helpfulTips.map((t) => `  - ${t}`).join("\n");
+      const mistakes = s.commonMistakes.map((m) => `  - ${m}`).join("\n");
+      const practice = s.practiceExercises.map((p) => `  - ${p.task}`).join("\n");
+      const resources = s.onlineResources
+        .map((res) => `  - [${res.title}](${res.url})`)
+        .join("\n");
+      return `### Step ${i + 1}. ${s.title}
+- **Why it matters:** ${s.whyItMatters}
+- **Estimated time:** ${s.estimatedTime}
+- **Difficulty:** ${s.difficulty}
+- **Prerequisites:** ${s.prerequisites.length ? s.prerequisites.join(", ") : "None"}
+- **Estimated cost:** ${s.estimatedCost}
+- **Helpful tips:**
+${tips || "  - (none listed)"}
+- **Common mistakes:**
+${mistakes || "  - (none listed)"}
+- **Practice:**
+${practice || "  - (none listed)"}
+- **Resources:**
+${resources || "  - (none listed)"}
+`;
+    })
+    .join("\n");
+
+  const milestonesMd = r.milestones
+    .map((m, i) => `- **M${i + 1}: ${m.title}** — ${m.description} (target week ${m.targetWeek}).`)
+    .join("\n");
+
+  const projectsMd = r.recommendedProjects
+    .map((p) => `- **${p.title}** — ${p.description} (${p.difficulty}).`)
+    .join("\n");
+
+  const roadmapMarkdown = `# ${r.title}
+
+> ${r.goal}
+
+**Estimated duration:** ${r.estimatedDuration}
+**Estimated budget:** ${r.estimatedBudget}
+**Difficulty:** ${r.difficulty}
+
+## Overview
+
+This is an example roadmap for **${r.title}**, included so you can explore the full PassionVerse experience before creating your own. Once you generate a roadmap from your own answers, Gemini will replace this scaffold with a plan shaped precisely around your situation.
+
+## Milestones
+
+${milestonesMd || "- (none listed)"}
+
+## Steps
+
+${stepsMd}
+
+## Recommended projects
+
+${projectsMd || "- (none listed)"}
+
+## Success tips
+
+${r.successTips.map((t) => `- ${t}`).join("\n") || "- (none listed)"}
+`;
+
+  // Build a simple Mon–Sun timetable from dailyTasks so the timetable tab
+  // has content without requiring a live Gemini call.
+  const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const times = ["18:30", "18:30", "18:30", "07:30", "18:30", "10:00", "20:00"];
+  const anchor = new Date();
+  anchor.setHours(0, 0, 0, 0);
+  const startIso = anchor.toISOString().slice(0, 10);
+  const sessionLines = dayNames
+    .map((day, i) => {
+      const task = r.dailyTasks[i];
+      const minutes = task?.durationMinutes ?? 30;
+      const title = task?.title ?? `Light review of ${r.title}`;
+      return `- **${day}** at **${times[i]}** · ${minutes} min — ${title}`;
+    })
+    .join("\n");
+  const weeklyLines = r.weeklyPlan
+    .map((w) => `- **Week ${w.weekNumber}** (Mon–Sun) — ${w.title}`)
+    .join("\n");
+  const timetableMarkdown = `# Timetable
+
+Starting ${startIso}. Edit any row to fit your real week.
+
+${sessionLines}
+${weeklyLines}
+`;
+
+  const timetable: PresetRoadmapTimetableEntry[] = [];
+  dayNames.forEach((day, i) => {
+    const task = r.dailyTasks[i];
+    const [h, mm] = times[i].split(":").map((n) => Number(n));
+    const date = new Date(anchor);
+    const diff = (["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(day) - ((anchor.getDay() + 6) % 7) + 7) % 7;
+    date.setDate(date.getDate() + diff);
+    date.setHours(h, mm, 0, 0);
+    timetable.push({
+      day,
+      time: times[i],
+      notifyAt: date.toISOString(),
+      title: task?.title ?? `Light review of ${r.title}`,
+      description: `${task?.durationMinutes ?? 30}-minute session scheduled for ${day} at ${times[i]}.`,
+      durationMinutes: task?.durationMinutes ?? 30,
+    });
+  });
+
+  const questionMarkdown = `# Interview Plan
+
+A short plan for exploring **${r.title}** before you commit to a full roadmap.
+
+1. **End goal** — What would success with ${r.title} look like for you?
+2. **Starting point** — What related experience or skills do you already have?
+3. **Weekly availability** — How many hours per week can you commit, and do you have a target date?
+4. **Resources & budget** — What budget, gear, or access do you already have?
+5. **Learning style & obstacles** — How do you learn best, and what tends to slow you down?
+`;
+
   return {
+    ...r,
+    questionMarkdown: r.questionMarkdown ?? questionMarkdown,
+    roadmapMarkdown: r.roadmapMarkdown ?? roadmapMarkdown,
+    timetableMarkdown: r.timetableMarkdown ?? timetableMarkdown,
+    timetable: r.timetable ?? timetable,
+  };
+}
+
+function resetRoadmapProgress(r: PresetRoadmap): PresetRoadmap {
+  const reset: PresetRoadmap = {
     ...r,
     progressPercentage: 0,
     isFavorite: false,
@@ -478,6 +620,7 @@ function resetRoadmapProgress(r: PresetRoadmap): PresetRoadmap {
     dailyTasks: r.dailyTasks.map((t) => ({ ...t, completed: false })),
     shoppingList: r.shoppingList.map((s) => ({ ...s, purchased: false })),
   };
+  return synthesizeMarkdown(reset);
 }
 
 export const PRESET_ROADMAPS: PresetRoadmap[] =

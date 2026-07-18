@@ -14,15 +14,16 @@ import {
   Loader2,
   BookOpen,
   Target,
-  CalendarDays,
-  FileText,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
-import type { PresetRoadmap } from "@/lib/seed-data";
+import { Bell, BellOff, CalendarDays } from "lucide-react";
+import type { PresetRoadmap, PresetRoadmapTimetableEntry } from "@/lib/seed-data";
 import type { RoadmapStepItem } from "@/db/schema";
 import { getDifficultyColor } from "@/lib/utils";
 import { askAboutStepAction } from "@/app/actions/roadmap-actions";
+import { Markdown } from "@/lib/markdown";
+import { scheduleLocalTimetableNotifications } from "@/lib/firebase-messaging";
 import { AiMentorDrawer } from "./AiMentorDrawer";
 
 interface RoadmapDetailViewProps {
@@ -39,12 +40,52 @@ export function RoadmapDetailView({
   onUpdateRoadmap,
   userGeminiApiKey,
 }: RoadmapDetailViewProps) {
-  const [activeTab, setActiveTab] = React.useState<"steps" | "progress" | "markdown" | "timetable">("steps");
+  type TabKey = "overview" | "timetable" | "steps" | "progress";
+  const [activeTab, setActiveTab] = React.useState<TabKey>("overview");
   const [selectedStepIdx, setSelectedStepIdx] = React.useState<number | null>(null);
   const [mentorOpen, setMentorOpen] = React.useState(false);
   const [stepMentorQuestion, setStepMentorQuestion] = React.useState("");
   const [stepMentorReply, setStepMentorReply] = React.useState<string | null>(null);
   const [stepMentorLoading, setStepMentorLoading] = React.useState(false);
+
+  // Local-only notification toggles — stored on the roadmap so they persist.
+  const [notificationsOn, setNotificationsOn] = React.useState(false);
+  const notifiedRowIds = React.useMemo(() => {
+    const set = new Set<number>();
+    (roadmap.timetable ?? []).forEach((row, i) => {
+      if (row.notified) set.add(i);
+    });
+    return set;
+  }, [roadmap]);
+
+  // Schedule (and clean up) local in-tab notifications whenever the
+  // timetable tab's master switch is flipped on.
+  React.useEffect(() => {
+    if (!notificationsOn) return;
+    const rows = (roadmap.timetable ?? []).filter((_, i) => notifiedRowIds.has(i));
+    const cancel = scheduleLocalTimetableNotifications(
+      rows.map((r) => ({ notifyAt: r.notifyAt, title: r.title, description: r.description }))
+    );
+    return cancel;
+  }, [notificationsOn, roadmap, notifiedRowIds]);
+
+  const toggleNotifiedRow = (index: number) => {
+    const next = (roadmap.timetable ?? []).map((row, i) =>
+      i === index ? { ...row, notified: !row.notified } : row
+    );
+    onUpdateRoadmap({ ...roadmap, timetable: next });
+  };
+
+  const enableAllNotifications = () => {
+    const next = (roadmap.timetable ?? []).map((row) =>
+      row.notifyAt ? { ...row, notified: true } : row
+    );
+    onUpdateRoadmap({ ...roadmap, timetable: next });
+    setNotificationsOn(true);
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  };
 
   const completedSteps = roadmap.steps.filter((s) => s.completed).length;
   const totalSteps = roadmap.steps.length || 1;
@@ -141,35 +182,175 @@ export function RoadmapDetailView({
         </div>
 
         {/* Tabs */}
-        <div className="mb-6 flex flex-wrap gap-2 border-b border-neutral-200 dark:border-neutral-800">
-          <button
-            onClick={() => setActiveTab("steps")}
-            className={`pb-3 text-sm font-bold px-1 transition-all ${activeTab === "steps" ? "border-b-2 border-purple-500 text-purple-600" : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300"}`}
-          >
-            Steps ({totalSteps})
-          </button>
-          <button
-            onClick={() => setActiveTab("progress")}
-            className={`pb-3 text-sm font-bold px-1 transition-all ${activeTab === "progress" ? "border-b-2 border-purple-500 text-purple-600" : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300"}`}
-          >
-            Milestones ({roadmap.milestones.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("markdown")}
-            className={`pb-3 text-sm font-bold px-1 transition-all flex items-center gap-1 ${activeTab === "markdown" ? "border-b-2 border-purple-500 text-purple-600" : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300"}`}
-          >
-            <FileText className="h-4 w-4" /> Roadmap MD
-          </button>
-          <button
-            onClick={() => setActiveTab("timetable")}
-            className={`pb-3 text-sm font-bold px-1 transition-all flex items-center gap-1 ${activeTab === "timetable" ? "border-b-2 border-purple-500 text-purple-600" : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300"}`}
-          >
-            <CalendarDays className="h-4 w-4" /> Timetable MD
-          </button>
+        <div className="mb-6 flex flex-wrap gap-x-5 gap-y-1 border-b border-neutral-200 dark:border-neutral-800">
+          {([
+            { key: "overview", label: "Overview" },
+            { key: "timetable", label: `Timetable (${(roadmap.timetable ?? []).filter((t) => t.time).length})` },
+            { key: "steps", label: `Steps (${totalSteps})` },
+            { key: "progress", label: `Milestones (${roadmap.milestones.length})` },
+          ] as const).map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`-mb-px pb-3 text-sm font-bold transition-colors ${
+                activeTab === tab.key
+                  ? "border-b-2 border-purple-500 text-purple-600"
+                  : "border-b-2 border-transparent text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
-        {/* TAB CONTENTS */}
+        {/* All tabs */}
         <AnimatePresence mode="wait">
+          {activeTab === "overview" && (
+            <motion.div
+              key="overview-tab"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="space-y-6"
+            >
+              <div className="rounded-3xl border border-neutral-200 bg-white px-6 py-7 shadow-sm sm:px-9 sm:py-9 dark:border-neutral-800 dark:bg-neutral-900">
+                {roadmap.roadmapMarkdown ? (
+                  <Markdown source={roadmap.roadmapMarkdown} />
+                ) : (
+                  <div className="py-8 text-center text-sm text-neutral-500">
+                    This roadmap predates the Markdown pipeline. Open the Steps tab to work through
+                    it interactively, or regenerate from the home page to get a Markdown version.
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === "timetable" && (
+            <motion.div
+              key="timetable-tab"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="space-y-6"
+            >
+              {/* Master switch + rendered Markdown */}
+              <div className="flex flex-col gap-4 rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-7 dark:border-neutral-800 dark:bg-neutral-900">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-50 text-purple-600 dark:bg-purple-950/40 dark:text-purple-300">
+                    <CalendarDays className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display text-lg font-extrabold text-neutral-900 dark:text-white">
+                      Session reminders
+                    </h3>
+                    <p className="mt-0.5 max-w-md text-sm text-neutral-500 dark:text-neutral-400">
+                      Turn on notifications for the rows you actually want a ping for. We'll fire
+                      them from your browser while this tab is open; for background push, deploy
+                      the Cloud Function documented in <code>FIREBASE_NOTIFICATIONS.md</code>.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    if (notificationsOn) {
+                      setNotificationsOn(false);
+                    } else {
+                      enableAllNotifications();
+                    }
+                  }}
+                  className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
+                    notificationsOn
+                      ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
+                      : "bg-neutral-900 text-white hover:bg-purple-600 dark:bg-white dark:text-neutral-900 dark:hover:bg-purple-500 dark:hover:text-white"
+                  }`}
+                >
+                  {notificationsOn ? (
+                    <>
+                      <Bell className="h-4 w-4" /> Notifications on
+                    </>
+                  ) : (
+                    <>
+                      <BellOff className="h-4 w-4" /> Enable all
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Rendered Markdown timetable */}
+              {roadmap.timetableMarkdown && (
+                <div className="rounded-3xl border border-neutral-200 bg-white px-6 py-7 shadow-sm sm:px-9 sm:py-9 dark:border-neutral-800 dark:bg-neutral-900">
+                  <Markdown source={roadmap.timetableMarkdown} />
+                </div>
+              )}
+
+              {/* Interactive rows — per-row Bell toggle */}
+              {(roadmap.timetable ?? []).filter((t) => t.time).length > 0 && (
+                <div className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm sm:p-6 dark:border-neutral-800 dark:bg-neutral-900">
+                  <h4 className="mb-3 px-2 font-display text-sm font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                    Scheduled sessions
+                  </h4>
+                  <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+                    {(roadmap.timetable ?? [])
+                      .map((row, i) => ({ row, i }))
+                      .filter(({ row }) => row.time)
+                      .map(({ row, i }) => (
+                        <li
+                          key={i}
+                          className="flex items-start gap-3 px-2 py-3"
+                        >
+                          <button
+                            onClick={() => toggleNotifiedRow(i)}
+                            disabled={!row.notifyAt}
+                            className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors ${
+                              row.notified
+                                ? "border-emerald-400 bg-emerald-50 text-emerald-600 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                : "border-neutral-200 bg-white text-neutral-400 hover:border-purple-300 hover:text-purple-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-500"
+                            }`}
+                            title={
+                              row.notified
+                                ? "Notification enabled — click to disable"
+                                : "Click to enable a reminder"
+                            }
+                          >
+                            {row.notified ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
+                          </button>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                              <span className="font-mono text-xs font-bold text-purple-600 dark:text-purple-400">
+                                {row.day} · {row.time}
+                              </span>
+                              <span className="font-semibold text-neutral-900 dark:text-white">
+                                {row.title}
+                              </span>
+                              {row.durationMinutes > 0 && (
+                                <span className="text-xs text-neutral-400">
+                                  · {row.durationMinutes} min
+                                </span>
+                              )}
+                            </div>
+                            {row.description && (
+                              <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
+                                {row.description}
+                              </p>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              )}
+
+              {!roadmap.timetableMarkdown && (roadmap.timetable ?? []).length === 0 && (
+                <div className="rounded-3xl border border-dashed border-neutral-300 bg-white/50 p-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/50">
+                  No timetable yet. Regenerate this roadmap from the home page to get a Markdown
+                  timetable you can subscribe to.
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* STEPS TAB */}
           {activeTab === "steps" && (
             <motion.div
               key="steps-tab"
@@ -360,13 +541,13 @@ export function RoadmapDetailView({
                         {/* Right side actions */}
                         <div className="flex shrink-0 items-center gap-1.5">
                           {!isSelected && (
-                            <div className="flex items-center gap-2">
+                            <>
                               <span className="hidden text-xs text-neutral-400 sm:inline-flex gap-1 items-center">
                                 <Clock className="h-3.5 w-3.5"/>{step.estimatedTime}
                               </span>
                               <MessageSquare className="h-4 w-4 text-purple-400 group-hover:text-purple-600"/>
                               <ChevronRight className="h-4 w-4 text-neutral-300 group-hover:text-purple-500"/>
-                            </div>
+                            </>
                           )}
                         </div>
                       </div>
@@ -407,50 +588,6 @@ export function RoadmapDetailView({
                   <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{ms.description}</p>
                 </div>
               ))}
-            </motion.div>
-          )}
-
-          {activeTab === "markdown" && (
-            <motion.div
-              key="markdown-tab"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="rounded-2xl border border-neutral-200 bg-white p-6 dark:border-neutral-800 dark:bg-neutral-900"
-            >
-              <div className="mb-4 flex items-center justify-between border-b border-neutral-100 pb-3 dark:border-neutral-800">
-                <h3 className="font-display text-lg font-black text-neutral-900 dark:text-white">
-                  Markdown Master Roadmap Guide
-                </h3>
-                <span className="rounded-full bg-purple-50 px-2.5 py-1 text-xs font-bold text-purple-700 dark:bg-purple-950/30 dark:text-purple-400">
-                  Rich Document Format
-                </span>
-              </div>
-              <div className="prose dark:prose-invert max-w-none overflow-y-auto max-h-[60vh] whitespace-pre-wrap rounded-xl bg-neutral-50 p-5 font-mono text-sm leading-relaxed text-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-800">
-                {roadmap.markdownRoadmap || "# No Markdown Available\nGenerate a new roadmap to view its markdown documentation."}
-              </div>
-            </motion.div>
-          )}
-
-          {activeTab === "timetable" && (
-            <motion.div
-              key="timetable-tab"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="rounded-2xl border border-neutral-200 bg-white p-6 dark:border-neutral-800 dark:bg-neutral-900"
-            >
-              <div className="mb-4 flex items-center justify-between border-b border-neutral-100 pb-3 dark:border-neutral-800">
-                <h3 className="font-display text-lg font-black text-neutral-900 dark:text-white">
-                  Chronological Timetable Schedule
-                </h3>
-                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 dark:bg-blue-950/30 dark:text-blue-400">
-                  Notification Triggers
-                </span>
-              </div>
-              <div className="prose dark:prose-invert max-w-none overflow-y-auto max-h-[60vh] whitespace-pre-wrap rounded-xl bg-neutral-50 p-5 font-mono text-sm leading-relaxed text-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-800">
-                {roadmap.markdownTimetable || "No Timetable Available.\nGenerate a new roadmap to view its timetable documentation."}
-              </div>
             </motion.div>
           )}
         </AnimatePresence>

@@ -11,15 +11,15 @@ import {
   Sparkles,
   ListChecks,
   Send,
-  FileText,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  generateInterviewQuestionsAction,
-  generateRoadmapFromInterviewAction,
+  generateInterviewPlanAction,
+  generateMarkdownRoadmapAction,
 } from "@/app/actions/roadmap-actions";
-import type { InterviewQuestion, InterviewAnswer } from "@/lib/gemini-types";
+import type { InterviewPlan } from "@/lib/gemini-types";
 import type { PresetRoadmap } from "@/lib/seed-data";
+import { Markdown } from "@/lib/markdown";
 
 interface AiInterviewModalProps {
   isOpen: boolean;
@@ -30,6 +30,8 @@ interface AiInterviewModalProps {
   userGeminiApiKey?: string;
 }
 
+type PlanQuestion = { label: string; question: string };
+
 export function AiInterviewModal({
   isOpen,
   onClose,
@@ -38,55 +40,52 @@ export function AiInterviewModal({
   userGeminiApiKey,
 }: AiInterviewModalProps) {
   const [passion, setPassion] = React.useState(initialPassion || "");
-  const [questions, setQuestions] = React.useState<InterviewQuestion[]>([]);
+  const [plan, setPlan] = React.useState<InterviewPlan | null>(null);
   const [answers, setAnswers] = React.useState<string[]>([]);
-  const [markdownQuestions, setMarkdownQuestions] = React.useState("");
   const [currentIndex, setCurrentIndex] = React.useState(0);
   const [draft, setDraft] = React.useState("");
   const [loadingQuestions, setLoadingQuestions] = React.useState(false);
   const [generatingRoadmap, setGeneratingRoadmap] = React.useState(false);
   const [error, setError] = React.useState("");
   const initializedPassionRef = React.useRef("");
-  const [activeSidebarTab, setActiveSidebarTab] = React.useState<"steps" | "markdown">("steps");
 
-  const interviewComplete =
-    questions.length > 0 &&
-    answers.length === questions.length &&
-    answers.every((answer) => answer?.trim());
+  const questions: PlanQuestion[] = plan?.questions ?? [];
+  const total = questions.length;
+  const interviewComplete = total > 0 && answers.length === total && answers.every((a) => a.trim());
   const currentQuestion = questions[currentIndex];
+  const isLast = currentIndex === total - 1;
 
-  const planQuestions = React.useCallback(async (selectedPassion: string) => {
-    const normalized = selectedPassion.trim();
-    if (!normalized) {
-      setError("Describe what you want to do or achieve first.");
-      return;
-    }
-    setError("");
-    setLoadingQuestions(true);
-    setQuestions([]);
-    setAnswers([]);
-    setMarkdownQuestions("");
-    setCurrentIndex(0);
-    setDraft("");
-    try {
-      const result = await generateInterviewQuestionsAction(normalized, userGeminiApiKey);
-      if (!result || !Array.isArray(result.questions) || result.questions.length < 3 || result.questions.length > 7) {
-        throw new Error("Gemini returned an unexpected interview format. Please try again.");
+  const planQuestions = React.useCallback(
+    async (selectedPassion: string) => {
+      const normalized = selectedPassion.trim();
+      if (!normalized) {
+        setError("Describe what you want to do or achieve first.");
+        return;
       }
-      setPassion(normalized);
-      setQuestions(result.questions);
-      setAnswers(new Array(result.questions.length).fill(""));
-      setMarkdownQuestions(result.markdownQuestions || "");
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Unable to prepare the interview. Please try again."
-      );
-    } finally {
-      setLoadingQuestions(false);
-    }
-  }, [userGeminiApiKey]);
+      setError("");
+      setLoadingQuestions(true);
+      setPlan(null);
+      setAnswers([]);
+      setCurrentIndex(0);
+      setDraft("");
+      try {
+        const planned = await generateInterviewPlanAction(normalized, userGeminiApiKey);
+        if (!planned || !Array.isArray(planned.questions) || planned.questions.length < 1) {
+          throw new Error("Gemini returned an empty interview plan. Please try again.");
+        }
+        setPassion(normalized);
+        setPlan(planned);
+        setAnswers(new Array(planned.questions.length).fill(""));
+      } catch (cause) {
+        setError(
+          cause instanceof Error ? cause.message : "Unable to prepare the interview. Please try again."
+        );
+      } finally {
+        setLoadingQuestions(false);
+      }
+    },
+    [userGeminiApiKey]
+  );
 
   React.useEffect(() => {
     if (!isOpen) {
@@ -95,9 +94,8 @@ export function AiInterviewModal({
     }
     const incoming = initialPassion?.trim() || "";
     setPassion(incoming);
-    setQuestions([]);
+    setPlan(null);
     setAnswers([]);
-    setMarkdownQuestions("");
     setCurrentIndex(0);
     setDraft("");
     setError("");
@@ -118,7 +116,7 @@ export function AiInterviewModal({
     setAnswers(nextAnswers);
     setError("");
 
-    if (currentIndex < questions.length - 1) {
+    if (!isLast) {
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
       setDraft(nextAnswers[nextIndex] || "");
@@ -129,27 +127,19 @@ export function AiInterviewModal({
 
   const editAnswer = (index: number) => {
     setCurrentIndex(index);
-    setDraft(answers[index] || "");
+    setDraft(answers[index] ?? "");
     setError("");
   };
 
   const generateRoadmap = async () => {
-    if (!interviewComplete) return;
+    if (!interviewComplete || !plan) return;
     setGeneratingRoadmap(true);
     setError("");
-    const bundledAnswers: InterviewAnswer[] = questions.map((question, index) => ({
-      questionId: question.id,
-      question: question.question,
-      answer: answers[index],
-    }));
-
     try {
-      const roadmap = await generateRoadmapFromInterviewAction(
-        {
-          passion,
-          answers: bundledAnswers,
-          markdownQuestions,
-        },
+      const roadmap = await generateMarkdownRoadmapAction(
+        passion,
+        plan,
+        answers,
         userGeminiApiKey
       );
       if (!roadmap || !Array.isArray(roadmap.steps) || roadmap.steps.length === 0) {
@@ -159,9 +149,7 @@ export function AiInterviewModal({
       onClose();
     } catch (cause) {
       setError(
-        cause instanceof Error
-          ? cause.message
-          : "Roadmap generation failed. Please try again."
+        cause instanceof Error ? cause.message : "Roadmap generation failed. Please try again."
       );
     } finally {
       setGeneratingRoadmap(false);
@@ -179,87 +167,63 @@ export function AiInterviewModal({
           exit={{ opacity: 0, scale: 0.96, y: 16 }}
           className="flex h-[90vh] w-full max-w-5xl overflow-hidden rounded-3xl border border-neutral-200 bg-white text-neutral-900 shadow-2xl dark:border-neutral-800 dark:bg-neutral-950 dark:text-white"
         >
-          {questions.length > 0 && (
-            <aside className="hidden w-80 shrink-0 overflow-y-auto border-r border-neutral-200 bg-neutral-50/70 p-5 dark:border-neutral-800 dark:bg-neutral-900/40 md:flex flex-col">
-              <div className="mb-4">
-                <div className="mb-2 flex gap-1 rounded-xl bg-neutral-200/50 p-1 dark:bg-neutral-800/50">
-                  <button
-                    onClick={() => setActiveSidebarTab("steps")}
-                    className={`flex-1 rounded-lg py-1.5 text-center text-xs font-bold transition-all ${
-                      activeSidebarTab === "steps"
-                        ? "bg-white text-purple-700 shadow-sm dark:bg-neutral-950 dark:text-purple-400"
-                        : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
-                    }`}
-                  >
-                    Steps
-                  </button>
-                  <button
-                    onClick={() => setActiveSidebarTab("markdown")}
-                    className={`flex-1 rounded-lg py-1.5 text-center text-xs font-bold transition-all ${
-                      activeSidebarTab === "markdown"
-                        ? "bg-white text-purple-700 shadow-sm dark:bg-neutral-950 dark:text-purple-400"
-                        : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
-                    }`}
-                  >
-                    Markdown
-                  </button>
+          {total > 0 && (
+            <aside className="hidden w-80 shrink-0 overflow-y-auto border-r border-neutral-200 bg-neutral-50/70 p-5 dark:border-neutral-800 dark:bg-neutral-900/40 md:block">
+              <div className="mb-5">
+                <div className="mb-1 flex items-center gap-2 text-sm font-bold text-purple-700 dark:text-purple-300">
+                  <ListChecks className="h-4 w-4" /> Interview plan
                 </div>
+                <p className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+                  Gemini wrote {total} question{total === 1 ? "" : "s"} for{" "}
+                  <strong className="text-neutral-800 dark:text-neutral-100">{passion}</strong>.
+                  Answer them in order.
+                </p>
               </div>
 
-              {activeSidebarTab === "steps" ? (
-                <div className="flex-1 space-y-2.5 overflow-y-auto">
-                  <div className="mb-4">
-                    <div className="mb-1 flex items-center gap-2 text-sm font-bold text-purple-700 dark:text-purple-300">
-                      <ListChecks className="h-4 w-4" /> Interview plan
-                    </div>
-                    <p className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-                      Exactly {questions.length} questions planned for: <strong className="text-neutral-800 dark:text-neutral-100">{passion}</strong>.
-                    </p>
-                  </div>
-
-                  {questions.map((question, index) => {
-                    const answered = Boolean(answers[index]?.trim());
-                    const active = index === currentIndex && !interviewComplete;
-                    return (
-                      <button
-                        key={question.id}
-                        onClick={() => editAnswer(index)}
-                        className={`w-full rounded-2xl border p-3 text-left transition-all ${
-                          active
-                            ? "border-purple-400 bg-purple-50 dark:border-purple-700 dark:bg-purple-950/30"
-                            : answered
-                            ? "border-emerald-300 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/20"
-                            : "border-neutral-200 bg-white hover:border-neutral-300 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-700"
-                        }`}
-                      >
-                        <div className="mb-1.5 flex items-center justify-between">
-                          <span
-                            className={`font-mono text-xs font-black ${
-                              active ? "text-purple-700 dark:text-purple-300" : "text-neutral-400"
-                            }`}
-                          >
-                            {question.id}
-                          </span>
-                          {answered && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
-                        </div>
-                        <div className="text-xs font-bold text-neutral-800 dark:text-neutral-100">
-                          {question.label}
-                        </div>
-                        <div className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
-                          {question.question}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="flex-1 overflow-y-auto whitespace-pre-wrap rounded-2xl bg-neutral-100/50 p-4 text-xs font-mono text-neutral-600 dark:bg-neutral-900/50 dark:text-neutral-400">
-                  <div className="mb-2 flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-purple-700 dark:text-purple-400">
-                    <FileText className="h-4 w-4" /> AI Generated Markdown Questions
-                  </div>
-                  {markdownQuestions || "No markdown loaded yet."}
+              {/* Render the AI's plan Markdown verbatim so the user sees
+                  exactly what the model asked for, not a re-derived list. */}
+              {plan?.markdown && (
+                <div className="mb-5 rounded-2xl border border-neutral-200 bg-white p-4 text-[13px] dark:border-neutral-800 dark:bg-neutral-900">
+                  <Markdown source={plan.markdown} />
                 </div>
               )}
+
+              <div className="space-y-2.5">
+                {questions.map((question, index) => {
+                  const answered = Boolean(answers[index]?.trim());
+                  const active = index === currentIndex && !interviewComplete;
+                  return (
+                    <button
+                      key={`${question.label}-${index}`}
+                      onClick={() => editAnswer(index)}
+                      className={`w-full rounded-2xl border p-3 text-left transition-all ${
+                        active
+                          ? "border-purple-400 bg-purple-50 dark:border-purple-700 dark:bg-purple-950/30"
+                          : answered
+                          ? "border-emerald-300 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/20"
+                          : "border-neutral-200 bg-white hover:border-neutral-300 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-700"
+                      }`}
+                    >
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <span
+                          className={`font-mono text-xs font-black ${
+                            active ? "text-purple-700 dark:text-purple-300" : "text-neutral-400"
+                          }`}
+                        >
+                          {index + 1}
+                        </span>
+                        {answered && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
+                      </div>
+                      <div className="text-xs font-bold text-neutral-800 dark:text-neutral-100">
+                        {question.label}
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
+                        {question.question}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </aside>
           )}
 
@@ -271,11 +235,11 @@ export function AiInterviewModal({
                 </div>
                 <div>
                   <h2 className="font-display text-base font-extrabold tracking-tight">
-                    PassionVerse Interview
+                    PassionVerse interview
                   </h2>
                   <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                    {questions.length > 0
-                      ? `${questions.length} personalized questions planned specifically for you`
+                    {total > 0
+                      ? `${total} focused answers → one coherent roadmap`
                       : "Tell us what you want to do, achieve, or explore"}
                   </p>
                 </div>
@@ -290,18 +254,23 @@ export function AiInterviewModal({
             </header>
 
             <div className="flex-1 overflow-y-auto p-5 sm:p-8">
-              {questions.length === 0 ? (
+              {total === 0 ? (
                 <div className="mx-auto flex h-full max-w-2xl flex-col justify-center">
-                  <div className="mb-8 text-center">
+                  <div className="mb-8">
                     <span className="mb-4 inline-flex rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-bold text-purple-700 dark:border-purple-800 dark:bg-purple-950/30 dark:text-purple-300">
-                      Step 1 · Define your passion
+                      Step 1 · Tell us the dream
                     </span>
-                    <h3 className="font-display text-3xl font-black tracking-tight sm:text-4xl">
-                      What do you want to do or achieve?
+                    <h3 className="font-display text-4xl font-black leading-[1.05] tracking-tight text-neutral-900 sm:text-5xl dark:text-white">
+                      I want to achieve
+                      <span className="mx-2 text-purple-600 dark:text-purple-400">—</span>
+                      <em className="not-italic text-neutral-400 dark:text-neutral-500">
+                        your words here.
+                      </em>
                     </h3>
-                    <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-neutral-500 dark:text-neutral-400">
-                      Your goal is sent to Gemini once. It creates a personalized set of 3 to 7 questions
-                      tailored to your exact situation.
+                    <p className="mt-4 max-w-xl text-sm leading-relaxed text-neutral-500 dark:text-neutral-400">
+                      Write one sentence in your own voice. Gemini will read it once and write
+                      between <strong>3 and 7 questions</strong> — exactly the number it needs to
+                      understand your specific situation. Nothing is hard-coded.
                     </p>
                   </div>
                   <form
@@ -314,7 +283,7 @@ export function AiInterviewModal({
                     <textarea
                       value={passion}
                       onChange={(event) => setPassion(event.target.value)}
-                      placeholder="Example: I want to make an Otto robot that can walk, avoid obstacles, and dance."
+                      placeholder="Example: I want to build an Otto robot that walks and avoids obstacles, starting from zero electronics experience."
                       rows={4}
                       className="w-full resize-none rounded-xl bg-transparent p-3 text-base text-neutral-900 placeholder:text-neutral-400 focus:outline-none dark:text-white"
                       autoFocus
@@ -322,42 +291,42 @@ export function AiInterviewModal({
                     <button
                       type="submit"
                       disabled={loadingQuestions || !passion.trim()}
-                      className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 px-5 py-3 font-bold text-white shadow-md shadow-purple-500/20 transition-all hover:from-purple-500 hover:to-indigo-500 disabled:opacity-50"
+                      className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl bg-neutral-900 px-5 py-3 text-sm font-bold text-white shadow-md transition-all hover:bg-purple-600 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-purple-500 dark:hover:text-white"
                     >
                       {loadingQuestions ? (
                         <Loader2 className="h-5 w-5 animate-spin" />
                       ) : (
                         <Sparkles className="h-5 w-5" />
                       )}
-                      {loadingQuestions ? "Gemini is planning your questions…" : "Create my questions"}
+                      {loadingQuestions ? "Gemini is writing your questions…" : "Write my questions"}
                     </button>
                   </form>
                 </div>
               ) : interviewComplete && !draft ? (
                 <div className="mx-auto max-w-3xl space-y-6">
-                  <div className="text-center">
+                  <div>
                     <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
                       <Check className="h-7 w-7" />
                     </div>
-                    <h3 className="font-display text-2xl font-black tracking-tight sm:text-3xl">
-                      All {questions.length} answers are bundled
+                    <h3 className="font-display text-3xl font-black leading-tight tracking-tight text-neutral-900 sm:text-4xl dark:text-white">
+                      All {total} answers are bundled.
                     </h3>
                     <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
-                      Review your responses. They will be sent together so Gemini can build one
-                      consistent, markdown-powered roadmap.
+                      Review them one more time. When you're ready, we send the bundle to Gemini
+                      and it writes your roadmap and timetable in Markdown.
                     </p>
                   </div>
 
                   <div className="space-y-3">
                     {questions.map((question, index) => (
                       <button
-                        key={question.id}
+                        key={`${question.label}-${index}`}
                         onClick={() => editAnswer(index)}
                         className="w-full rounded-2xl border border-neutral-200 bg-white p-4 text-left transition-colors hover:border-purple-300 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-purple-700"
                       >
                         <div className="mb-1 flex items-center justify-between gap-3">
                           <span className="text-xs font-black text-purple-700 dark:text-purple-300">
-                            {question.id}. {question.label}
+                            {index + 1}. {question.label}
                           </span>
                           <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">
                             Edit
@@ -374,32 +343,34 @@ export function AiInterviewModal({
                   <button
                     onClick={generateRoadmap}
                     disabled={generatingRoadmap}
-                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 px-6 py-4 font-black text-white shadow-lg shadow-emerald-500/20 transition-transform hover:scale-[1.01] disabled:opacity-60"
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-neutral-900 px-6 py-4 font-black text-white shadow-lg transition-transform hover:scale-[1.01] hover:bg-purple-600 disabled:opacity-60 dark:bg-white dark:text-neutral-900 dark:hover:bg-purple-500 dark:hover:text-white"
                   >
                     {generatingRoadmap ? (
                       <Loader2 className="h-5 w-5 animate-spin" />
                     ) : (
                       <Sparkles className="h-5 w-5" />
                     )}
-                    {generatingRoadmap ? "Building your personalized roadmap…" : "Send bundle and generate roadmap"}
+                    {generatingRoadmap
+                      ? "Writing your roadmap + timetable…"
+                      : "Send bundle → generate roadmap"}
                   </button>
                 </div>
               ) : (
                 <div className="mx-auto flex h-full max-w-2xl flex-col justify-center">
                   <div className="mb-5 flex items-center justify-between">
                     <span className="rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-black text-purple-700 dark:border-purple-800 dark:bg-purple-950/30 dark:text-purple-300">
-                      Question {currentIndex + 1} of {questions.length}
+                      Question {currentIndex + 1} of {total}
                     </span>
                     <span className="text-xs text-neutral-400">
-                      {answers.filter(Boolean).length}/{questions.length} answered
+                      {answers.filter(Boolean).length}/{total} answered
                     </span>
                   </div>
 
-                  <div className="mb-5 grid gap-2" style={{ gridTemplateColumns: `repeat(${questions.length}, minmax(0, 1fr))` }}>
-                    {questions.map((question, index) => (
+                  <div className="mb-5 grid gap-2" style={{ gridTemplateColumns: `repeat(${total}, minmax(0, 1fr))` }}>
+                    {questions.map((_, index) => (
                       <div
-                        key={question.id}
-                        className={`h-1.5 rounded-full ${
+                        key={index}
+                        className={`h-1.5 rounded-full transition-colors ${
                           answers[index]
                             ? "bg-emerald-500"
                             : index === currentIndex
@@ -414,20 +385,23 @@ export function AiInterviewModal({
                     <div className="mb-2 text-xs font-black uppercase tracking-widest text-purple-700 dark:text-purple-300">
                       {currentQuestion.label}
                     </div>
-                    <h3 className="font-display text-xl font-black leading-snug tracking-tight sm:text-2xl">
+                    <h3 className="font-display text-2xl font-black leading-snug tracking-tight sm:text-3xl">
                       {currentQuestion.question}
                     </h3>
-                    <p className="mt-3 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-                      Why we ask: {currentQuestion.whyNeeded}
-                    </p>
 
                     <textarea
                       value={draft}
                       onChange={(event) => setDraft(event.target.value)}
-                      placeholder="Give a clear, honest answer so your roadmap fits your real situation…"
+                      placeholder="Answer in your own words — specifics make the roadmap sharper."
                       rows={6}
                       className="mt-6 w-full resize-none rounded-2xl border border-neutral-200 bg-neutral-50/60 p-4 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-purple-400 focus:bg-white focus:outline-none dark:border-neutral-700 dark:bg-neutral-950/40 dark:text-white dark:focus:bg-neutral-950"
                       autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault();
+                          saveCurrentAnswer();
+                        }
+                      }}
                     />
 
                     <div className="mt-4 flex items-center justify-between gap-3">
@@ -441,27 +415,19 @@ export function AiInterviewModal({
                       <button
                         onClick={saveCurrentAnswer}
                         disabled={!draft.trim()}
-                        className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-purple-500/20 transition-all hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40"
+                        className="flex items-center gap-2 rounded-xl bg-neutral-900 px-5 py-2.5 text-sm font-bold text-white shadow-md transition-all hover:bg-purple-600 disabled:opacity-40 dark:bg-white dark:text-neutral-900 dark:hover:bg-purple-500 dark:hover:text-white"
                       >
-                        {currentIndex === questions.length - 1 ? "Save final answer" : "Save and continue"}
-                        {currentIndex === questions.length - 1 ? (
-                          <Check className="h-4 w-4" />
-                        ) : (
-                          <ArrowRight className="h-4 w-4" />
-                        )}
+                        {isLast ? "Save final answer" : "Save and continue"}
+                        {isLast ? <Check className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
                       </button>
                     </div>
                   </div>
 
                   <div className="mt-4 flex items-center justify-center">
-                    <button
-                      type="button"
-                      disabled={!draft.trim()}
-                      onClick={saveCurrentAnswer}
-                      className="flex items-center gap-1.5 text-xs font-medium text-neutral-500 transition-colors hover:text-purple-600 disabled:opacity-40 dark:text-neutral-400 dark:hover:text-purple-300"
-                    >
-                      <Send className="h-3 w-3" /> Save and continue (Enter)
-                    </button>
+                    <span className="text-[11px] text-neutral-400">
+                      Tip: press <kbd className="rounded bg-neutral-200 px-1.5 py-0.5 font-mono text-[10px] text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">⌘</kbd>
+                      +<kbd className="ml-0.5 rounded bg-neutral-200 px-1.5 py-0.5 font-mono text-[10px] text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">↵</kbd> to save
+                    </span>
                   </div>
                 </div>
               )}

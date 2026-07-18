@@ -43,11 +43,10 @@ export async function generateRoadmapFromInterviewAction(
   bundle: InterviewBundle,
   apiKeyOverride?: string
 ): Promise<PresetRoadmap> {
-  const answerCount = bundle.answers?.length ?? 0;
   const normalizedBundle: InterviewBundle = {
     passion: bundle.passion.trim().slice(0, 300),
     answers: (bundle.answers ?? [])
-      .slice(0, answerCount)
+      .slice(0, 5)
       .map((item, index) => ({
         questionId: index + 1,
         question: (item?.question ?? "").trim().slice(0, 500),
@@ -55,8 +54,8 @@ export async function generateRoadmapFromInterviewAction(
       })),
   };
 
-  if (!normalizedBundle.passion || answerCount < 3 || answerCount > 7) {
-    throw new Error(`A passion and exactly 3 to 7 interview answers are required (received ${answerCount}).`);
+  if (!normalizedBundle.passion || normalizedBundle.answers.length !== 5) {
+    throw new Error("A passion and all five interview answers are required.");
   }
   if (normalizedBundle.answers.some((item) => !item.question || !item.answer)) {
     throw new Error("Please answer every interview question before generating your roadmap.");
@@ -73,27 +72,6 @@ export async function generateRoadmapFromInterviewAction(
     const timeAnswer = normalizedBundle.answers.find((a) => a.questionId === 3)?.answer ?? "";
     const budgetAnswer = normalizedBundle.answers.find((a) => a.questionId === 4)?.answer ?? "";
 
-    const fallbackMd = `
-# Fallback Roadmap: ${normalizedBundle.passion}
-
-We experienced a generation hiccup, but your structured guide is safely compiled below.
-
-## Personal Goal
-${goalAnswer || `Explore and master ${normalizedBundle.passion}.`}
-
-## Commitment
-- **Estimated Duration:** ${timeAnswer || "8 Weeks"}
-- **Budget Range:** ${budgetAnswer || "Free tools"}
-`;
-
-    const fallbackTimetable = `
-| Phase | Action Checkpoint | Commitment |
-|---|---|---|
-| Phase 1 | Foundation & Basics | ${timeAnswer || "Flexible schedule"} |
-| Phase 2 | Core Milestones | Progress-driven |
-| Phase 3 | Final Polish & Review | Continuous habit |
-`;
-
     return {
       ...base,
       id: `fallback-${Date.now()}`,
@@ -108,8 +86,6 @@ ${goalAnswer || `Explore and master ${normalizedBundle.passion}.`}
       milestones: base.milestones.map((m) => ({ ...m, completed: false })),
       dailyTasks: base.dailyTasks.map((t) => ({ ...t, completed: false })),
       shoppingList: base.shoppingList.map((s) => ({ ...s, purchased: false })),
-      markdownRoadmap: fallbackMd,
-      markdownTimetable: fallbackTimetable,
     };
   }
 }
@@ -142,5 +118,109 @@ export async function askAboutStepAction(
     return {
       reply: `I could not reach the mentor right now (${message}). For this step, focus on the first listed practice exercise and skim the official documentation link. Come back and ask me again in a moment.`,
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Markdown-native actions (2026 refresh). The legacy JSON actions above are
+// kept so older clients and tests continue to compile.
+// ---------------------------------------------------------------------------
+
+import {
+  generateInterviewPlanAI,
+  generateRoadmapAndTimetableAI,
+} from "@/lib/gemini";
+import type { InterviewPlan } from "@/lib/gemini-types";
+
+export async function generateInterviewPlanAction(
+  passion: string,
+  apiKeyOverride?: string
+): Promise<InterviewPlan> {
+  const normalized = passion.trim().slice(0, 300);
+  if (!normalized) {
+    throw new Error("Please enter a passion before starting the interview.");
+  }
+  return generateInterviewPlanAI(normalized, apiKeyOverride);
+}
+
+/**
+ * Given a completed interview plan + the user's answers, ask Gemini for a
+ * roadmap Markdown and a timetable Markdown, parse the interactive steps and
+ * timetable rows, and return a full PresetRoadmap ready to be persisted.
+ */
+export async function generateMarkdownRoadmapAction(
+  passion: string,
+  plan: InterviewPlan,
+  answers: string[],
+  apiKeyOverride?: string
+): Promise<PresetRoadmap> {
+  if (!passion.trim() || !plan.questions.length) {
+    throw new Error("A passion and a non-empty interview plan are required.");
+  }
+  if (answers.length !== plan.questions.length) {
+    throw new Error("Please answer every question before generating your roadmap.");
+  }
+  if (answers.some((a) => !a.trim())) {
+    throw new Error("Please answer every question before generating your roadmap.");
+  }
+
+  try {
+    const generated = await generateRoadmapAndTimetableAI(
+      passion,
+      plan,
+      answers,
+      apiKeyOverride
+    );
+    if (!generated.steps.length) {
+      throw new Error("Gemini returned a roadmap with no steps; using fallback scaffold.");
+    }
+    return {
+      id: `md-${Date.now()}`,
+      title: generated.roadmapTitle,
+      goal: generated.roadmapGoal,
+      category: generated.roadmapCategory,
+      estimatedDuration: generated.estimatedDuration,
+      estimatedBudget: generated.estimatedBudget,
+      difficulty: generated.difficulty,
+      progressPercentage: 0,
+      isFavorite: false,
+      isPublic: true,
+      weeklyPlan: [],
+      milestones: generated.steps
+        .slice(0, 4)
+        .map((s, i) => ({
+          id: `m-${i + 1}`,
+          title: s.title,
+          description: s.whyItMatters || s.description,
+          targetWeek: i + 1,
+          completed: false,
+        })),
+      dailyTasks: generated.timetable
+        .filter((t) => t.time)
+        .slice(0, 7)
+        .map((t, i) => ({
+          id: `dt-${i + 1}`,
+          dayNumber: i + 1,
+          title: t.title,
+          durationMinutes: t.durationMinutes,
+          completed: false,
+        })),
+      shoppingList: [],
+      learningPath: [],
+      recommendedProjects: [],
+      commonMistakes: [],
+      successTips: [],
+      steps: generated.steps,
+      createdAt: new Date().toISOString(),
+      questionMarkdown: plan.markdown,
+      roadmapMarkdown: generated.roadmapMarkdown,
+      timetableMarkdown: generated.timetableMarkdown,
+      timetable: generated.timetable,
+    };
+  } catch (cause) {
+    // The generator already falls back to a Markdown scaffold internally, so
+    // reaching here means an unexpected exception. Surface a clear error.
+    const message = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`Roadmap generation failed: ${message}`);
   }
 }

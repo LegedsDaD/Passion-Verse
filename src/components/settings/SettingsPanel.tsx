@@ -28,6 +28,13 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [showGemini, setShowGemini] = React.useState(false);
   const [showElevenLabs, setShowElevenLabs] = React.useState(false);
   const [justSaved, setJustSaved] = React.useState(false);
+  const [notifState, setNotifState] = React.useState<NotificationPermission | "unsupported">(
+    typeof Notification === "undefined" ? "unsupported" : Notification.permission
+  );
+
+  React.useEffect(() => {
+    if (typeof Notification !== "undefined") setNotifState(Notification.permission);
+  }, [open]);
 
   React.useEffect(() => {
     if (open) {
@@ -165,10 +172,34 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                     </div>
                   </div>
 
-                  {/* ElevenLabs key */}
-                  <div>
-                    <label className="mb-1.5 flex items-center justify-between text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-                      <span>Your ElevenLabs API key</span>
+                {/* Notifications — local, in-tab reminders */}
+                <div>
+                  <label className="mb-1.5 flex items-center justify-between text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                    <span>Timetable reminders</span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (typeof Notification === "undefined") return;
+                        const perm = await Notification.requestPermission();
+                        setNotifState(perm);
+                      }}
+                      className="font-medium normal-case tracking-normal text-purple-600 hover:underline dark:text-purple-400"
+                    >
+                      {notifState === "granted" ? "Enabled" : notifState === "denied" ? "Blocked in browser" : "Allow in browser"}
+                    </button>
+                  </label>
+                  <p className="text-[13px] leading-relaxed text-neutral-600 dark:text-neutral-300">
+                    When enabled, PassionVerse schedules local notifications from each roadmap's
+                    timetable. They fire while any tab is open; for true background push, follow
+                    <code className="mx-1 rounded bg-neutral-100 px-1 py-0.5 font-mono text-[11px] text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200">FIREBASE_NOTIFICATIONS.md</code>
+                    and deploy the bundled Cloud Function.
+                  </p>
+                </div>
+
+                {/* ElevenLabs key */}
+                <div>
+                  <label className="mb-1.5 flex items-center justify-between text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                    <span>Your ElevenLabs API key</span>
                       <a
                         href="https://elevenlabs.io/app/settings/api-keys"
                         target="_blank"
@@ -197,20 +228,20 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                         {showElevenLabs ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>
                     </div>
-                    <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-400">
-                      PassionVerse does not currently have any voice or speaking features. This
-                      key is only saved for you — nothing reads it yet.
-                    </p>
-                  </div>
-
-                  <p className="text-[11px] leading-relaxed text-neutral-400">
-                    Keys are stored privately on your account and sent only to Google's or
-                    ElevenLabs' own servers when your requests need them. PassionVerse never
-                    shares your keys with other users.
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-400">
+                    PassionVerse does not currently have any voice or speaking features. This
+                    key is only saved for you — nothing reads it yet.
                   </p>
                 </div>
-              )}
-            </div>
+
+                <p className="text-[11px] leading-relaxed text-neutral-400">
+                  Keys are stored privately on your account and sent only to Google's or
+                  ElevenLabs' own servers when your requests need them. PassionVerse never
+                  shares your keys with other users.
+                </p>
+              </div>
+            )}
+          </div>
 
             <footer className="flex items-center justify-between gap-3 border-t border-neutral-200 px-6 py-4 dark:border-neutral-800">
               <button
