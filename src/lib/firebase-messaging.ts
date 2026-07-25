@@ -20,7 +20,6 @@
  * reports `{ ok: false, reason: "not-configured" }` so callers can show
  * a friendly hint.
  */
-"use client";
 
 import { auth, dbFirestore, isFirebaseConfigured, app as fbApp } from "@/lib/firebase";
 import { doc, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
