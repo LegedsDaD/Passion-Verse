@@ -12,6 +12,10 @@
  * and within inline text it handles **bold**, *italic*, `code`, and
  * [text](url) links. Nested lists are not supported — Gemini's prompts are
  * shaped to emit flat lists only.
+ *
+ * This module is pure — no browser APIs, no runtime state — so it does not
+ * need `"use client"`. Any component that imports <Markdown /> already lives
+ * in a client boundary, so Next will treat it as client automatically.
  */
 
 import React from "react";

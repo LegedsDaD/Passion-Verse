@@ -148,27 +148,26 @@ export function HeroSection({ onStartInterview, onExploreRoadmaps }: HeroSection
           </span>
         </h1>
 
-        {/* Right-aligned supporting column — breaks the centered trio pattern */}
-        <div className="mt-10 grid gap-8 lg:grid-cols-[1.2fr_1fr] lg:items-end">
-          <p className="max-w-xl text-lg leading-relaxed text-neutral-700 sm:text-xl dark:text-neutral-300">
-            Tell us, in your own words, what you want to achieve. Gemini reads
-            it once and writes{" "}
-            <span className="font-bold text-neutral-900 dark:text-white">between three and seven questions</span>{" "}
-            — exactly the number it needs for your situation. Nothing is hard-coded.
-            Answer them, and you get a complete Markdown roadmap plus a timetable
-            you can subscribe to.
-          </p>
+        {/* Supporting paragraph */}
+        <p className="mt-10 max-w-2xl text-lg leading-relaxed text-neutral-700 sm:text-xl dark:text-neutral-300">
+          Tell us, in your own words, what you want to achieve. Gemini reads
+          it once and writes{" "}
+          <span className="font-bold text-neutral-900 dark:text-white">
+            between three and seven questions
+          </span>{" "}
+          — exactly the number it needs for your situation. Nothing is hard-coded.
+          Answer them, and you get a complete Markdown roadmap plus a timetable
+          you can subscribe to.
+        </p>
 
-          {/* Live rotating examples ticker */}
-          <LiveTicker dreams={POPULAR_DREAMS} onPick={onStartInterview} />
-        </div>
-
-        {/* Input */}
+        {/* PRIMARY CTA — input + Start Journey. Rendered explicitly before the
+            ticker so it always sits above the fold, never hidden by an
+            AnimatePresence overlay. */}
         <form
           onSubmit={handleSubmit}
-          className="mt-10 w-full max-w-2xl"
+          className="relative z-10 mt-10 w-full max-w-2xl"
         >
-          <div className="flex flex-col gap-2 rounded-2xl border border-neutral-200 bg-white/90 p-2 shadow-xl shadow-neutral-200/50 backdrop-blur-sm dark:border-neutral-800 dark:bg-neutral-900/90 dark:shadow-black/30 sm:flex-row sm:p-2">
+          <div className="flex flex-col gap-2 rounded-2xl border-2 border-purple-200 bg-white p-2 shadow-2xl shadow-purple-500/10 dark:border-purple-800 dark:bg-neutral-900 dark:shadow-purple-500/20 sm:flex-row sm:p-2">
             <input
               id="passion-input"
               type="text"
@@ -176,23 +175,42 @@ export function HeroSection({ onStartInterview, onExploreRoadmaps }: HeroSection
               onChange={(e) => setDreamInput(e.target.value)}
               placeholder='e.g. "I want to learn Japanese" or "I want to make an Otto robot"'
               autoComplete="off"
-              className="flex-1 rounded-xl bg-transparent px-4 py-3.5 text-base text-neutral-900 placeholder:text-neutral-400 focus:outline-none dark:text-white"
+              className="flex-1 rounded-xl bg-transparent px-4 py-4 text-base text-neutral-900 placeholder:text-neutral-500 focus:outline-none dark:text-white dark:placeholder:text-neutral-400"
             />
             <button
               type="submit"
-              className="group flex w-full items-center justify-center gap-2 rounded-xl bg-neutral-900 px-6 py-3.5 text-sm font-bold text-white shadow-lg transition-all hover:bg-purple-600 sm:w-auto dark:bg-white dark:text-neutral-900 dark:hover:bg-purple-500 dark:hover:text-white"
+              className="group flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 via-purple-500 to-indigo-600 px-7 py-4 text-base font-black text-white shadow-lg shadow-purple-500/40 ring-1 ring-white/20 transition-all hover:scale-[1.02] hover:shadow-xl hover:shadow-purple-500/50 sm:w-auto"
             >
               Start My Journey
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+              <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
             </button>
           </div>
+          <p className="mt-3 pl-2 text-xs font-medium text-neutral-500 dark:text-neutral-400">
+            Free · Powered by Google Gemini · No credit card
+          </p>
         </form>
 
-        {/* The rotating ticker replaces the centered chip row. See
-            <LiveTicker /> definition below the HeroSection export. */}
+        {/* Live rotating examples ticker — below the fold, tap to prefill */}
+        <div className="relative z-0 mt-10 w-full max-w-md">
+          <LiveTicker
+            dreams={POPULAR_DREAMS}
+            onPick={(picked) => {
+              setDreamInput(picked);
+              // Give React a tick to update the input, then focus + scroll it
+              // into view so the user immediately sees their chosen passion.
+              requestAnimationFrame(() => {
+                const el = document.getElementById(
+                  "passion-input"
+                ) as HTMLInputElement | null;
+                el?.focus();
+                el?.scrollIntoView({ behavior: "smooth", block: "center" });
+              });
+            }}
+          />
+        </div>
 
         {/* Scroll cue */}
-        <div className="mt-16 text-[11px] font-bold uppercase tracking-[0.3em] text-neutral-400">
+        <div className="mt-14 text-[11px] font-bold uppercase tracking-[0.3em] text-neutral-400">
           Scroll ↓
         </div>
       </motion.div>

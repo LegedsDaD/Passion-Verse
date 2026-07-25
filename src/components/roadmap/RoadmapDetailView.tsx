@@ -18,13 +18,14 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 import { toast } from "sonner";
-import { Bell, BellOff, CalendarDays } from "lucide-react";
-import type { PresetRoadmap } from "@/lib/seed-data";
+import { Bell, BellOff, CalendarDays, Settings2, Code2, FileText, Copy } from "lucide-react";
+import type { PresetRoadmap, PresetRoadmapTimetableEntry } from "@/lib/seed-data";
 import { getDifficultyColor } from "@/lib/utils";
 import { askAboutStepAction } from "@/app/actions/roadmap-actions";
 import { Markdown } from "@/lib/markdown";
 import { scheduleLocalTimetableNotifications } from "@/lib/firebase-messaging";
 import { useNotifications } from "@/hooks/useNotifications";
+import { NotificationEditor } from "./NotificationEditor";
 import { AiMentorDrawer } from "./AiMentorDrawer";
 
 interface RoadmapDetailViewProps {
@@ -51,6 +52,20 @@ export function RoadmapDetailView({
 
   const notifications = useNotifications();
   const notificationsOn = notifications.state === "granted";
+
+  // Notification editor + raw-markdown toggle
+  const [editorOpen, setEditorOpen] = React.useState(false);
+  const [showRawRoadmap, setShowRawRoadmap] = React.useState(false);
+  const [showRawTimetable, setShowRawTimetable] = React.useState(false);
+
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copied to clipboard`);
+    } catch {
+      toast.error("Copy failed", { description: "Your browser blocked clipboard access." });
+    }
+  };
 
   const notifiedRowIds = React.useMemo(() => {
     const set = new Set<number>();
@@ -236,18 +251,58 @@ export function RoadmapDetailView({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="space-y-6"
+              className="space-y-4"
             >
-              <div className="rounded-3xl border border-neutral-200 bg-white px-6 py-7 shadow-sm sm:px-9 sm:py-9 dark:border-neutral-800 dark:bg-neutral-900">
-                {roadmap.roadmapMarkdown ? (
-                  <Markdown source={roadmap.roadmapMarkdown} />
-                ) : (
-                  <div className="py-8 text-center text-sm text-neutral-500">
-                    This roadmap predates the Markdown pipeline. Open the Steps tab to work through
-                    it interactively, or regenerate from the home page to get a Markdown version.
+              {roadmap.roadmapMarkdown ? (
+                <>
+                  {/* View mode toggle + Copy */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white p-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+                    <div className="flex items-center gap-1 rounded-xl bg-neutral-100 p-1 text-xs font-bold dark:bg-neutral-800">
+                      <button
+                        onClick={() => setShowRawRoadmap(false)}
+                        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-colors ${
+                          !showRawRoadmap
+                            ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-white"
+                            : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
+                        }`}
+                      >
+                        <FileText className="h-3.5 w-3.5" /> Rendered
+                      </button>
+                      <button
+                        onClick={() => setShowRawRoadmap(true)}
+                        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-colors ${
+                          showRawRoadmap
+                            ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-white"
+                            : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
+                        }`}
+                      >
+                        <Code2 className="h-3.5 w-3.5" /> Raw Markdown
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => copyToClipboard(roadmap.roadmapMarkdown!, "Roadmap Markdown")}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white"
+                    >
+                      <Copy className="h-3.5 w-3.5" /> Copy
+                    </button>
                   </div>
-                )}
-              </div>
+
+                  <div className="rounded-3xl border border-neutral-200 bg-white px-6 py-7 shadow-sm sm:px-9 sm:py-9 dark:border-neutral-800 dark:bg-neutral-900">
+                    {showRawRoadmap ? (
+                      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-2xl bg-neutral-950 p-5 font-mono text-[13px] leading-relaxed text-neutral-100 dark:bg-black">
+                        <code>{roadmap.roadmapMarkdown}</code>
+                      </pre>
+                    ) : (
+                      <Markdown source={roadmap.roadmapMarkdown} />
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-3xl border border-dashed border-neutral-300 bg-white/50 p-10 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/50">
+                  This roadmap has no saved Markdown yet. Open the Steps tab to work through it
+                  interactively, or regenerate from the home page to get a Markdown version.
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -276,50 +331,99 @@ export function RoadmapDetailView({
                     </p>
                   </div>
                 </div>
-                <button
-                  onClick={() => {
-                    if (notificationsOn) {
-                      disableAllNotifications();
-                    } else {
-                      enableAllNotifications();
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => setEditorOpen(true)}
+                    className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-sm font-bold text-neutral-700 transition-colors hover:border-purple-300 hover:text-purple-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:border-purple-600 dark:hover:text-purple-300"
+                    title="Edit which sessions ping you and at what time"
+                  >
+                    <Settings2 className="h-4 w-4" />
+                    Edit schedule
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (notificationsOn) {
+                        disableAllNotifications();
+                      } else {
+                        enableAllNotifications();
+                      }
+                    }}
+                    disabled={
+                      notifications.busy ||
+                      notifications.state === "unsupported" ||
+                      notifications.state === "denied"
                     }
-                  }}
-                  disabled={
-                    notifications.busy ||
-                    notifications.state === "unsupported" ||
-                    notifications.state === "denied"
-                  }
-                  className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                    notificationsOn
-                      ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
-                      : "bg-neutral-900 text-white hover:bg-purple-600 dark:bg-white dark:text-neutral-900 dark:hover:bg-purple-500 dark:hover:text-white"
-                  }`}
-                >
-                  {notifications.busy ? (
-                    <>
-                      <Bell className="h-4 w-4 animate-pulse" /> Enabling…
-                    </>
-                  ) : notifications.state === "denied" ? (
-                    <>
-                      <BellOff className="h-4 w-4" /> Blocked
-                    </>
-                  ) : notificationsOn ? (
-                    <>
-                      <Bell className="h-4 w-4" /> Notifications on
-                    </>
-                  ) : (
-                    <>
-                      <BellOff className="h-4 w-4" /> Enable all
-                    </>
-                  )}
-                </button>
+                    className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                      notificationsOn
+                        ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
+                        : "bg-neutral-900 text-white hover:bg-purple-600 dark:bg-white dark:text-neutral-900 dark:hover:bg-purple-500 dark:hover:text-white"
+                    }`}
+                  >
+                    {notifications.busy ? (
+                      <>
+                        <Bell className="h-4 w-4 animate-pulse" /> Enabling…
+                      </>
+                    ) : notifications.state === "denied" ? (
+                      <>
+                        <BellOff className="h-4 w-4" /> Blocked
+                      </>
+                    ) : notificationsOn ? (
+                      <>
+                        <Bell className="h-4 w-4" /> Notifications on
+                      </>
+                    ) : (
+                      <>
+                        <BellOff className="h-4 w-4" /> Enable all
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
-              {/* Rendered Markdown timetable */}
+              {/* Rendered / Raw Markdown timetable */}
               {roadmap.timetableMarkdown && (
-                <div className="rounded-3xl border border-neutral-200 bg-white px-6 py-7 shadow-sm sm:px-9 sm:py-9 dark:border-neutral-800 dark:bg-neutral-900">
-                  <Markdown source={roadmap.timetableMarkdown} />
-                </div>
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white p-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+                    <div className="flex items-center gap-1 rounded-xl bg-neutral-100 p-1 text-xs font-bold dark:bg-neutral-800">
+                      <button
+                        onClick={() => setShowRawTimetable(false)}
+                        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-colors ${
+                          !showRawTimetable
+                            ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-white"
+                            : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
+                        }`}
+                      >
+                        <FileText className="h-3.5 w-3.5" /> Rendered
+                      </button>
+                      <button
+                        onClick={() => setShowRawTimetable(true)}
+                        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-colors ${
+                          showRawTimetable
+                            ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-white"
+                            : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
+                        }`}
+                      >
+                        <Code2 className="h-3.5 w-3.5" /> Raw Markdown
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => copyToClipboard(roadmap.timetableMarkdown!, "Timetable Markdown")}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white"
+                    >
+                      <Copy className="h-3.5 w-3.5" /> Copy
+                    </button>
+                  </div>
+
+                  <div className="rounded-3xl border border-neutral-200 bg-white px-6 py-7 shadow-sm sm:px-9 sm:py-9 dark:border-neutral-800 dark:bg-neutral-900">
+                    {showRawTimetable ? (
+                      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-2xl bg-neutral-950 p-5 font-mono text-[13px] leading-relaxed text-neutral-100 dark:bg-black">
+                        <code>{roadmap.timetableMarkdown}</code>
+                      </pre>
+                    ) : (
+                      <Markdown source={roadmap.timetableMarkdown} />
+                    )}
+                  </div>
+                </>
               )}
 
               {/* Interactive rows — per-row Bell toggle */}
@@ -637,6 +741,28 @@ export function RoadmapDetailView({
         isOpen={mentorOpen}
         onClose={() => setMentorOpen(false)}
         userGeminiApiKey={userGeminiApiKey}
+      />
+
+      <NotificationEditor
+        open={editorOpen}
+        onClose={() => setEditorOpen(false)}
+        roadmap={roadmap}
+        onSave={async (nextTimetable: PresetRoadmapTimetableEntry[]) => {
+          // Persist edited schedule, then re-arm push/local notifications if
+          // the user has already granted permission.
+          await onUpdateRoadmap({ ...roadmap, timetable: nextTimetable });
+          if (notificationsOn) {
+            // The useEffect in this component already re-schedules whenever
+            // `roadmap` changes, so no further action is required here.
+          } else {
+            // If notifications are off but the user just saved a schedule,
+            // offer to enable them.
+            const wantsEnable = window.confirm(
+              "Turn on push notifications now so this schedule can actually fire?"
+            );
+            if (wantsEnable) await notifications.enable();
+          }
+        }}
       />
     </div>
   );
