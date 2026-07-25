@@ -2,6 +2,7 @@
 
 import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
 import {
   X,
   KeyRound,
@@ -12,8 +13,11 @@ import {
   ShieldCheck,
   ExternalLink,
   Loader2,
+  Bell,
+  BellOff,
 } from "lucide-react";
 import { useUserSettings } from "@/hooks/useUserSettings";
+import { useNotifications } from "@/hooks/useNotifications";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -22,19 +26,13 @@ interface SettingsPanelProps {
 
 export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const { settings, loading, saving, saveSettings, usingPersonalGeminiKey } = useUserSettings();
+  const notifications = useNotifications();
 
   const [geminiKey, setGeminiKey] = React.useState("");
   const [elevenLabsKey, setElevenLabsKey] = React.useState("");
   const [showGemini, setShowGemini] = React.useState(false);
   const [showElevenLabs, setShowElevenLabs] = React.useState(false);
   const [justSaved, setJustSaved] = React.useState(false);
-  const [notifState, setNotifState] = React.useState<NotificationPermission | "unsupported">(
-    typeof Notification === "undefined" ? "unsupported" : Notification.permission
-  );
-
-  React.useEffect(() => {
-    if (typeof Notification !== "undefined") setNotifState(Notification.permission);
-  }, [open]);
 
   React.useEffect(() => {
     if (open) {
@@ -47,12 +45,19 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   }, [open, settings.geminiApiKey, settings.elevenLabsApiKey]);
 
   const handleSave = async () => {
-    await saveSettings({
-      geminiApiKey: geminiKey.trim(),
-      elevenLabsApiKey: elevenLabsKey.trim(),
-    });
-    setJustSaved(true);
-    window.setTimeout(() => setJustSaved(false), 2000);
+    try {
+      await saveSettings({
+        geminiApiKey: geminiKey.trim(),
+        elevenLabsApiKey: elevenLabsKey.trim(),
+      });
+      setJustSaved(true);
+      toast.success("Settings saved");
+      window.setTimeout(() => setJustSaved(false), 2000);
+    } catch (err) {
+      toast.error("Could not save settings", {
+        description: err instanceof Error ? err.message : "Please try again.",
+      });
+    }
   };
 
   const handleClear = async () => {
@@ -172,27 +177,80 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                     </div>
                   </div>
 
-                {/* Notifications — local, in-tab reminders */}
-                <div>
-                  <label className="mb-1.5 flex items-center justify-between text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-                    <span>Timetable reminders</span>
+                {/* Notifications — full Firebase Cloud Messaging setup */}
+                <div className="rounded-2xl border border-neutral-200 bg-neutral-50/60 p-4 dark:border-neutral-800 dark:bg-neutral-900/60">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {notifications.state === "granted" ? (
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                          <Bell className="h-4 w-4" />
+                        </div>
+                      ) : (
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
+                          <BellOff className="h-4 w-4" />
+                        </div>
+                      )}
+                      <div>
+                        <div className="text-sm font-bold text-neutral-900 dark:text-white">
+                          Push notifications
+                        </div>
+                        <div className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+                          {notifications.state === "unsupported" &&
+                            "Not supported in this browser"}
+                          {notifications.state === "not-configured" &&
+                            "Sign in first, then enable notifications"}
+                          {notifications.state === "default" && "Ready to enable"}
+                          {notifications.state === "granted" &&
+                            (notifications.token
+                              ? "Enabled · background push ready"
+                              : "Enabled · in-tab reminders only")}
+                          {notifications.state === "denied" &&
+                            "Blocked in browser settings"}
+                        </div>
+                      </div>
+                    </div>
                     <button
                       type="button"
-                      onClick={async () => {
-                        if (typeof Notification === "undefined") return;
-                        const perm = await Notification.requestPermission();
-                        setNotifState(perm);
+                      onClick={() => {
+                        if (notifications.state === "granted") {
+                          notifications.disable();
+                        } else {
+                          notifications.enable();
+                        }
                       }}
-                      className="font-medium normal-case tracking-normal text-purple-600 hover:underline dark:text-purple-400"
+                      disabled={
+                        notifications.busy ||
+                        notifications.state === "unsupported" ||
+                        notifications.state === "denied"
+                      }
+                      className={`rounded-xl px-3 py-2 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+                        notifications.state === "granted"
+                          ? "border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                          : "bg-neutral-900 text-white hover:bg-purple-600 dark:bg-white dark:text-neutral-900 dark:hover:bg-purple-500 dark:hover:text-white"
+                      }`}
                     >
-                      {notifState === "granted" ? "Enabled" : notifState === "denied" ? "Blocked in browser" : "Allow in browser"}
+                      {notifications.busy ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : notifications.state === "granted" ? (
+                        "Turn off"
+                      ) : notifications.state === "denied" ? (
+                        "Blocked"
+                      ) : (
+                        "Enable"
+                      )}
                     </button>
-                  </label>
-                  <p className="text-[13px] leading-relaxed text-neutral-600 dark:text-neutral-300">
-                    When enabled, PassionVerse schedules local notifications from each roadmap's
-                    timetable. They fire while any tab is open; for true background push, follow
-                    <code className="mx-1 rounded bg-neutral-100 px-1 py-0.5 font-mono text-[11px] text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200">FIREBASE_NOTIFICATIONS.md</code>
-                    and deploy the bundled Cloud Function.
+                  </div>
+                  <p className="text-[12px] leading-relaxed text-neutral-600 dark:text-neutral-300">
+                    Get pinged when a scheduled roadmap session is due. Works in-tab
+                    immediately; for background push (tab closed) also set
+                    <code className="mx-1 rounded bg-neutral-100 px-1 py-0.5 font-mono text-[11px] text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200">
+                      NEXT_PUBLIC_FIREBASE_VAPID_KEY
+                    </code>
+                    and deploy the scheduled Cloud Function from{" "}
+                    <code className="rounded bg-neutral-100 px-1 py-0.5 font-mono text-[11px] text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200">
+                      FIREBASE_NOTIFICATIONS.md
+                    </code>
+                    .
                   </p>
                 </div>
 

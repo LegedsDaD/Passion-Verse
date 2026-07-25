@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { auth, dbFirestore, isFirebaseConfigured } from "@/lib/firebase";
 import {
   collection,
@@ -54,6 +55,16 @@ function localUserId(): string {
   return id;
 }
 
+/**
+ * Deeply strip `undefined` and non-serialisable values (functions, symbols,
+ * `Date` objects that we didn't already convert). Firestore accepts what
+ * JSON.stringify accepts, so a round-trip through JSON is the simplest
+ * belt-and-suspenders that also guarantees no cycles slip in.
+ */
+function sanitize<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value ?? null));
+}
+
 export type RoadmapSource = "mine" | "example";
 
 export function useRoadmaps() {
@@ -61,6 +72,7 @@ export function useRoadmaps() {
   const [loading, setLoading] = useState(true);
   const [firebaseUid, setFirebaseUid] = useState<string | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
+  const knownIdsRef = useRef<Set<string>>(new Set());
 
   const userId = firebaseUid || localUserId();
   const useFirestore = isFirebaseConfigured && Boolean(dbFirestore) && Boolean(firebaseUid);
@@ -89,12 +101,13 @@ export function useRoadmaps() {
           const list: PresetRoadmap[] = snap.docs
             .map((d) => {
               const data = d.data() as Record<string, any>;
+              const payload = (data.payload as PresetRoadmap) ?? ({} as PresetRoadmap);
               return {
-                ...(data.payload as PresetRoadmap),
+                ...payload,
                 id: d.id,
                 createdAt:
                   data.createdAt?.toDate?.()?.toISOString?.() ??
-                  data.payload?.createdAt ??
+                  payload.createdAt ??
                   new Date().toISOString(),
               };
             })
@@ -102,10 +115,18 @@ export function useRoadmaps() {
               (a, b) =>
                 new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
             );
+          knownIdsRef.current = new Set(list.map((r) => r.id));
           setMyRoadmaps(list);
           setLoading(false);
         },
-        () => {
+        (error) => {
+          console.warn("Firestore roadmaps snapshot failed:", error);
+          toast.error("Could not sync your roadmaps from the cloud", {
+            description:
+              error instanceof Error
+                ? error.message
+                : "Falling back to this browser's local storage.",
+          });
           setMyRoadmaps(readLocalStorage());
           setLoading(false);
         }
@@ -118,7 +139,9 @@ export function useRoadmaps() {
     }
 
     // Fallback: localStorage
-    setMyRoadmaps(readLocalStorage());
+    const localList = readLocalStorage();
+    knownIdsRef.current = new Set(localList.map((r) => r.id));
+    setMyRoadmaps(localList);
     setLoading(false);
     return () => {
       cancelled = true;
@@ -127,24 +150,48 @@ export function useRoadmaps() {
 
   const saveRoadmap = useCallback(
     async (roadmap: PresetRoadmap) => {
+      // Sanitise once — sanitised payload is safe for Firestore *and*
+      // localStorage, and we always keep the caller informed of failures.
+      const clean = sanitize(roadmap);
+
       if (useFirestore && dbFirestore) {
-        const ref = doc(collection(dbFirestore, "roadmaps"), roadmap.id);
-        await setDoc(ref, {
-          userId,
-          source: "mine",
-          title: roadmap.title,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          payload: roadmap,
-        });
-        return;
+        try {
+          const ref = doc(collection(dbFirestore, "roadmaps"), roadmap.id);
+          const isNew = !knownIdsRef.current.has(roadmap.id);
+          await setDoc(
+            ref,
+            {
+              userId,
+              source: "mine" as const,
+              title: roadmap.title,
+              // Preserve the original creation timestamp on updates.
+              ...(isNew ? { createdAt: serverTimestamp() } : {}),
+              updatedAt: serverTimestamp(),
+              payload: clean,
+            },
+            { merge: !isNew }
+          );
+          knownIdsRef.current.add(roadmap.id);
+          return { ok: true as const };
+        } catch (error) {
+          console.error("Failed to save roadmap to Firestore:", error);
+          const message =
+            error instanceof Error ? error.message : "Unknown Firestore error";
+          toast.error("Could not save your roadmap to the cloud", {
+            description: `${message}. Saved locally on this device as a backup.`,
+          });
+          // Fall through to localStorage so the user does not lose progress.
+        }
       }
+
       const existing = readLocalStorage();
       const idx = existing.findIndex((r) => r.id === roadmap.id);
-      if (idx >= 0) existing[idx] = roadmap;
-      else existing.unshift(roadmap);
+      if (idx >= 0) existing[idx] = clean;
+      else existing.unshift(clean);
       writeLocalStorage(existing);
+      knownIdsRef.current.add(roadmap.id);
       setMyRoadmaps(existing);
+      return { ok: true as const };
     },
     [useFirestore, userId]
   );
@@ -157,11 +204,21 @@ export function useRoadmaps() {
   const deleteRoadmap = useCallback(
     async (id: string) => {
       if (useFirestore && dbFirestore) {
-        await deleteDoc(doc(collection(dbFirestore, "roadmaps"), id));
-        return;
+        try {
+          await deleteDoc(doc(collection(dbFirestore, "roadmaps"), id));
+          knownIdsRef.current.delete(id);
+          return;
+        } catch (error) {
+          console.error("Failed to delete roadmap in Firestore:", error);
+          toast.error("Could not delete your roadmap from the cloud", {
+            description:
+              error instanceof Error ? error.message : "Removed locally only.",
+          });
+        }
       }
       const next = readLocalStorage().filter((r) => r.id !== id);
       writeLocalStorage(next);
+      knownIdsRef.current.delete(id);
       setMyRoadmaps(next);
     },
     [useFirestore]

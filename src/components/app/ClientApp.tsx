@@ -20,6 +20,7 @@ import { PRESET_ROADMAPS, type PresetRoadmap } from "@/lib/seed-data";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { Compass, FolderHeart, Sparkles, Search, Plus, Trash2, ArrowLeft } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
 
 export default function ClientApp() {
   const [viewMode, setViewMode] = React.useState<"home" | "explore" | "detail">("home");
@@ -64,10 +65,16 @@ export default function ClientApp() {
   };
 
   const handleRoadmapGenerated = async (newRoadmap: PresetRoadmap) => {
-    await saveRoadmap(newRoadmap);
+    const result = await saveRoadmap(newRoadmap);
     setActiveRoadmap(newRoadmap);
     setViewMode("detail");
     window.scrollTo({ top: 0, behavior: "smooth" });
+    if (result.ok) {
+      toast.success("Roadmap saved to your account", {
+        description:
+          "Every step, milestone, and edit will sync automatically from now on.",
+      });
+    }
   };
 
   const handleSelectRoadmap = (roadmap: PresetRoadmap) => {

@@ -1,36 +1,45 @@
 /**
  * Client-only helpers for Firebase Cloud Messaging (FCM).
  *
- * FCM only runs in the browser; we never touch it on the server. The flow
- * is:
- *   1. The signed-in user clicks "Enable notifications" in Settings.
- *   2. We request the Notification permission from the browser.
- *   3. We call `getToken(messaging, { vapidKey })` — the VAPID key comes
- *      from the Firebase console's "Cloud Messaging" tab (Web configuration).
- *   4. We store the token in `userTokens/{uid}` so a future Cloud Function
- *      (or this app's own local scheduler) can target this user.
- *   5. A `public/firebase-messaging-sw.js` service worker receives
- *      background messages and renders them as system notifications.
+ * The full flow:
+ *   1. The signed-in user clicks "Enable notifications" (Settings or
+ *      Timetable tab).
+ *   2. `requestNotificationPermission()` asks the browser for permission.
+ *   3. `registerFcmToken()` registers the Firebase service worker,
+ *      calls `getToken(messaging, { vapidKey })`, and stores the token
+ *      at `userTokens/{uid}` in Firestore so a scheduled Cloud Function
+ *      can target the user later.
+ *   4. `subscribeForegroundMessages()` shows an in-app toast when a push
+ *      arrives while the tab is focused (FCM does not surface those as
+ *      system notifications automatically).
+ *   5. `scheduleLocalTimetableNotifications()` provides zero-server
+ *      reminders that fire from an open tab; they work even without a
+ *      deployed Cloud Function.
  *
  * If Firebase isn't configured, every helper degrades to a no-op and
- * reports `{ ok: false, reason: "not-configured" }` so callers can show a
- * friendly hint.
+ * reports `{ ok: false, reason: "not-configured" }` so callers can show
+ * a friendly hint.
  */
 "use client";
 
-import { auth, dbFirestore, isFirebaseConfigured } from "@/lib/firebase";
+import { auth, dbFirestore, isFirebaseConfigured, app as fbApp } from "@/lib/firebase";
 import { doc, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 
-// The Firebase console exposes this under Project Settings → Cloud
-// Messaging → Web configuration → "Web Push certificates". Replace with
-// your own once you deploy.
-const VAPID_KEY =
+const RAW_VAPID_KEY =
   process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY ||
   "REPLACE_WITH_YOUR_WEB_PUSH_CERTIFICATE_FROM_FIREBASE_CONSOLE";
 
+/** True if a real (non-placeholder) VAPID key is present in the env. */
+export const hasVapidKey =
+  Boolean(RAW_VAPID_KEY) && !RAW_VAPID_KEY.startsWith("REPLACE_WITH_");
+
 export type NotificationSupport =
   | { ok: true }
-  | { ok: false; reason: "not-configured" | "unsupported" | "denied" | "error"; message?: string };
+  | {
+      ok: false;
+      reason: "not-configured" | "unsupported" | "denied" | "no-vapid-key" | "error";
+      message?: string;
+    };
 
 export function isNotificationSupported(): boolean {
   if (typeof window === "undefined") return false;
@@ -39,17 +48,48 @@ export function isNotificationSupported(): boolean {
   return true;
 }
 
+/**
+ * The current best-guess of what state the FCM permission is in for the
+ * signed-in user + this browser. Cheap enough to call every render.
+ */
+export function currentNotificationState():
+  | "unsupported"
+  | "not-configured"
+  | "default"
+  | "granted"
+  | "denied" {
+  if (!isNotificationSupported()) return "unsupported";
+  if (!isFirebaseConfigured) return "not-configured";
+  const perm = Notification.permission;
+  if (perm === "granted") return "granted";
+  if (perm === "denied") return "denied";
+  return "default";
+}
+
 export async function requestNotificationPermission(): Promise<NotificationSupport> {
   if (!isFirebaseConfigured || !dbFirestore || !auth?.currentUser) {
-    return { ok: false, reason: "not-configured", message: "Firebase or sign-in is not ready yet." };
+    return {
+      ok: false,
+      reason: "not-configured",
+      message: "Sign in first, then enable notifications.",
+    };
   }
   if (!isNotificationSupported()) {
-    return { ok: false, reason: "unsupported", message: "This browser does not support push notifications." };
+    return {
+      ok: false,
+      reason: "unsupported",
+      message: "This browser does not support push notifications.",
+    };
   }
   try {
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
-      return { ok: false, reason: "denied", message: "Notification permission was not granted." };
+      return {
+        ok: false,
+        reason: "denied",
+        message:
+          "Notifications were not allowed. Enable them in your browser's site settings and try again.",
+      };
     }
     return { ok: true };
   } catch (err) {
@@ -61,26 +101,71 @@ export async function requestNotificationPermission(): Promise<NotificationSuppo
   }
 }
 
+async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
+  if (!("serviceWorker" in navigator)) return null;
+  try {
+    // Use an existing registration if we already have one — re-registering
+    // is safe but wasteful.
+    const existing = await navigator.serviceWorker.getRegistration(
+      "/firebase-messaging-sw.js"
+    );
+    if (existing) return existing;
+    return await navigator.serviceWorker.register("/firebase-messaging-sw.js", {
+      scope: "/",
+    });
+  } catch (err) {
+    console.warn("SW registration failed:", err);
+    return null;
+  }
+}
+
 export async function registerFcmToken(): Promise<NotificationSupport & { token?: string }> {
   if (!isFirebaseConfigured || !dbFirestore || !auth?.currentUser) {
-    return { ok: false, reason: "not-configured" };
+    return {
+      ok: false,
+      reason: "not-configured",
+      message: "Sign in first, then enable notifications.",
+    };
   }
   if (!isNotificationSupported()) {
     return { ok: false, reason: "unsupported" };
   }
-  try {
-    const { getMessaging, getToken } = await import("firebase/messaging");
-    const { app } = await import("@/lib/firebase");
-    if (!app) return { ok: false, reason: "not-configured" };
-    const messaging = getMessaging(app);
+  if (!hasVapidKey) {
+    return {
+      ok: false,
+      reason: "no-vapid-key",
+      message:
+        "NEXT_PUBLIC_FIREBASE_VAPID_KEY is not set. Local in-tab reminders will still work; see FIREBASE_NOTIFICATIONS.md for background push.",
+    };
+  }
 
-    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+  try {
+    const { getMessaging, getToken, isSupported } = await import(
+      "firebase/messaging"
+    );
+    if (!(await isSupported())) {
+      return {
+        ok: false,
+        reason: "unsupported",
+        message: "This browser does not support Firebase Cloud Messaging.",
+      };
+    }
+    if (!fbApp) return { ok: false, reason: "not-configured" };
+
+    const registration = await registerServiceWorker();
+    const messaging = getMessaging(fbApp);
     const token = await getToken(messaging, {
-      vapidKey: VAPID_KEY,
-      serviceWorkerRegistration: registration,
+      vapidKey: RAW_VAPID_KEY,
+      serviceWorkerRegistration: registration ?? undefined,
     });
+
     if (!token) {
-      return { ok: false, reason: "error", message: "FCM did not return a token." };
+      return {
+        ok: false,
+        reason: "error",
+        message:
+          "FCM did not return a token. Make sure you have granted notification permission and try again.",
+      };
     }
 
     await setDoc(
@@ -94,6 +179,7 @@ export async function registerFcmToken(): Promise<NotificationSupport & { token?
     );
     return { ok: true, token };
   } catch (err) {
+    console.error("FCM registration failed:", err);
     return {
       ok: false,
       reason: "error",
@@ -108,6 +194,32 @@ export async function unregisterFcmToken(): Promise<void> {
     await deleteDoc(doc(dbFirestore, "userTokens", auth.currentUser.uid));
   } catch {
     /* best effort */
+  }
+}
+
+/**
+ * Subscribe to foreground FCM messages (when the tab is focused). The
+ * caller receives every payload; typical use is to show an in-app toast.
+ * Returns an unsubscribe function.
+ */
+export async function subscribeForegroundMessages(
+  handler: (payload: {
+    notification?: { title?: string; body?: string };
+    data?: Record<string, string>;
+  }) => void
+): Promise<() => void> {
+  if (!isFirebaseConfigured || !fbApp || !isNotificationSupported()) {
+    return () => {};
+  }
+  try {
+    const { getMessaging, onMessage, isSupported } = await import(
+      "firebase/messaging"
+    );
+    if (!(await isSupported())) return () => {};
+    const messaging = getMessaging(fbApp);
+    return onMessage(messaging, handler);
+  } catch {
+    return () => {};
   }
 }
 

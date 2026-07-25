@@ -17,13 +17,14 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
+import { toast } from "sonner";
 import { Bell, BellOff, CalendarDays } from "lucide-react";
-import type { PresetRoadmap, PresetRoadmapTimetableEntry } from "@/lib/seed-data";
-import type { RoadmapStepItem } from "@/db/schema";
+import type { PresetRoadmap } from "@/lib/seed-data";
 import { getDifficultyColor } from "@/lib/utils";
 import { askAboutStepAction } from "@/app/actions/roadmap-actions";
 import { Markdown } from "@/lib/markdown";
 import { scheduleLocalTimetableNotifications } from "@/lib/firebase-messaging";
+import { useNotifications } from "@/hooks/useNotifications";
 import { AiMentorDrawer } from "./AiMentorDrawer";
 
 interface RoadmapDetailViewProps {
@@ -48,8 +49,9 @@ export function RoadmapDetailView({
   const [stepMentorReply, setStepMentorReply] = React.useState<string | null>(null);
   const [stepMentorLoading, setStepMentorLoading] = React.useState(false);
 
-  // Local-only notification toggles — stored on the roadmap so they persist.
-  const [notificationsOn, setNotificationsOn] = React.useState(false);
+  const notifications = useNotifications();
+  const notificationsOn = notifications.state === "granted";
+
   const notifiedRowIds = React.useMemo(() => {
     const set = new Set<number>();
     (roadmap.timetable ?? []).forEach((row, i) => {
@@ -58,8 +60,9 @@ export function RoadmapDetailView({
     return set;
   }, [roadmap]);
 
-  // Schedule (and clean up) local in-tab notifications whenever the
-  // timetable tab's master switch is flipped on.
+  // Whenever notifications are on, keep the in-tab scheduler in sync with
+  // the roadmap's list of "notified" rows. This runs both on toggle changes
+  // and when the roadmap is edited elsewhere.
   React.useEffect(() => {
     if (!notificationsOn) return;
     const rows = (roadmap.timetable ?? []).filter((_, i) => notifiedRowIds.has(i));
@@ -69,22 +72,44 @@ export function RoadmapDetailView({
     return cancel;
   }, [notificationsOn, roadmap, notifiedRowIds]);
 
-  const toggleNotifiedRow = (index: number) => {
+  const toggleNotifiedRow = async (index: number) => {
+    const target = (roadmap.timetable ?? [])[index];
+    // If the user wants a reminder but hasn't enabled notifications yet,
+    // walk them through the full FCM permission + token flow first.
+    if (target && !target.notified && !notificationsOn) {
+      const ok = await notifications.enable();
+      if (!ok) return;
+    }
     const next = (roadmap.timetable ?? []).map((row, i) =>
       i === index ? { ...row, notified: !row.notified } : row
     );
     onUpdateRoadmap({ ...roadmap, timetable: next });
   };
 
-  const enableAllNotifications = () => {
+  const enableAllNotifications = async () => {
+    // First: make sure notifications are actually enabled at the browser +
+    // Firebase level. This is the piece that was previously missing.
+    if (!notificationsOn) {
+      const ok = await notifications.enable();
+      if (!ok) return;
+    }
     const next = (roadmap.timetable ?? []).map((row) =>
       row.notifyAt ? { ...row, notified: true } : row
     );
+    const scheduledCount = next.filter((r) => r.notified && r.notifyAt).length;
     onUpdateRoadmap({ ...roadmap, timetable: next });
-    setNotificationsOn(true);
-    if (typeof Notification !== "undefined" && Notification.permission === "default") {
-      Notification.requestPermission();
+    if (scheduledCount > 0) {
+      toast.success(`Reminders scheduled for ${scheduledCount} session${scheduledCount === 1 ? "" : "s"}`, {
+        description:
+          "You'll get a push notification a few seconds before each session begins.",
+      });
     }
+  };
+
+  const disableAllNotifications = async () => {
+    const next = (roadmap.timetable ?? []).map((row) => ({ ...row, notified: false }));
+    onUpdateRoadmap({ ...roadmap, timetable: next });
+    await notifications.disable();
   };
 
   const completedSteps = roadmap.steps.filter((s) => s.completed).length;
@@ -254,18 +279,31 @@ export function RoadmapDetailView({
                 <button
                   onClick={() => {
                     if (notificationsOn) {
-                      setNotificationsOn(false);
+                      disableAllNotifications();
                     } else {
                       enableAllNotifications();
                     }
                   }}
-                  className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
+                  disabled={
+                    notifications.busy ||
+                    notifications.state === "unsupported" ||
+                    notifications.state === "denied"
+                  }
+                  className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                     notificationsOn
                       ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
                       : "bg-neutral-900 text-white hover:bg-purple-600 dark:bg-white dark:text-neutral-900 dark:hover:bg-purple-500 dark:hover:text-white"
                   }`}
                 >
-                  {notificationsOn ? (
+                  {notifications.busy ? (
+                    <>
+                      <Bell className="h-4 w-4 animate-pulse" /> Enabling…
+                    </>
+                  ) : notifications.state === "denied" ? (
+                    <>
+                      <BellOff className="h-4 w-4" /> Blocked
+                    </>
+                  ) : notificationsOn ? (
                     <>
                       <Bell className="h-4 w-4" /> Notifications on
                     </>

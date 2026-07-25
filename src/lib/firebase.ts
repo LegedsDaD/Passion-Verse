@@ -1,6 +1,10 @@
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth, GoogleAuthProvider } from "firebase/auth";
-import { getFirestore, type Firestore } from "firebase/firestore";
+import {
+  initializeFirestore,
+  getFirestore,
+  type Firestore,
+} from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
@@ -25,9 +29,29 @@ let googleProvider: GoogleAuthProvider | null = null;
 
 if (typeof window !== "undefined" && isFirebaseConfigured) {
   try {
-    app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+    const isFirstInit = !getApps().length;
+    app = isFirstInit ? initializeApp(firebaseConfig) : getApp();
     auth = getAuth(app);
-    dbFirestore = getFirestore(app);
+
+    // Roadmaps carry optional fields (questionMarkdown, timetable, per-row
+    // `notified` flags, per-step description, etc). Firestore v10 rejects
+    // any `undefined` in the payload by default, which is exactly why saves
+    // were failing silently. `ignoreUndefinedProperties: true` strips them
+    // on write so partial objects always persist correctly.
+    if (isFirstInit) {
+      try {
+        dbFirestore = initializeFirestore(app, {
+          ignoreUndefinedProperties: true,
+        });
+      } catch {
+        // initializeFirestore throws if it has already been called for this
+        // app (e.g. during Fast Refresh). Fall back to the existing instance.
+        dbFirestore = getFirestore(app);
+      }
+    } else {
+      dbFirestore = getFirestore(app);
+    }
+
     googleProvider = new GoogleAuthProvider();
   } catch (error) {
     // Swallow during SSR so the page can still render the "Sign in" UI.
